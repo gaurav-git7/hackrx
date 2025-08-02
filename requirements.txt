@@ -1,0 +1,17 @@
+# Core dependencies for LLM-powered query–retrieval system
+PyMuPDF
+python-docx
+extract-msg
+faiss-cpu
+numpy
+torch
+transformers
+requests
+python-dotenv
+chromadb
+sentence-transformers
+
+# Web framework dependencies
+fastapi
+uvicorn[standard]
+pydantic
