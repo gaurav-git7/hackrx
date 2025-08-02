@@ -15,7 +15,7 @@ import requests
 from typing import List, Dict, Any
 
 # LangChain imports for enhanced document processing
-from langchain_community.document_loaders import UnstructuredFileLoader
+from langchain_unstructured import UnstructuredLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -28,7 +28,7 @@ def load_and_process_document(file_path: str) -> List[Any]:
         raise ValueError("❌ Only PDF files are supported in this enhanced version.")
     
     print(f"📄 Loading document: {file_path}")
-    loader = UnstructuredFileLoader(file_path)
+    loader = UnstructuredLoader(file_path)
     documents = loader.load()
     
     print(f"📝 Document loaded with {len(documents)} pages")

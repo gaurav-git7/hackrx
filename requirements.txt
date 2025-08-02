@@ -16,6 +16,7 @@ langchain
 langchain-community
 langchain-core
 langchain-text-splitters
+langchain-unstructured
 
 # Web framework dependencies
 fastapi
