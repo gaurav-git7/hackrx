@@ -1,28 +1,29 @@
 # Core dependencies for LLM-powered query–retrieval system
-PyMuPDF
-python-docx
-extract-msg
-faiss-cpu
-numpy
-torch
-transformers
-requests
-python-dotenv
-chromadb
-sentence-transformers
+PyMuPDF==1.23.8
+python-docx==1.1.0
+extract-msg==0.41
+faiss-cpu==1.7.4
+numpy==1.24.3
+requests==2.31.0
+python-dotenv==1.0.0
+chromadb==0.4.22
+sentence-transformers==2.2.2
 
 # LangChain dependencies
-langchain
-langchain-community
-langchain-core
-langchain-text-splitters
-langchain-unstructured
+langchain==0.1.0
+langchain-community==0.0.10
+langchain-core==0.1.10
+langchain-text-splitters==0.0.1
+langchain-unstructured==0.0.10
 
 # Web framework dependencies
-fastapi
-uvicorn[standard]
-pydantic
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
 
 # Additional dependencies for document processing
-unstructured
-python-multipart
+unstructured==0.11.8
+python-multipart==0.0.6
+
+# Remove torch and transformers for now to reduce build complexity
+# These will be installed automatically by sentence-transformers if needed
