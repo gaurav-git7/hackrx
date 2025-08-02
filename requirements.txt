@@ -7,14 +7,12 @@ numpy==1.24.3
 requests==2.31.0
 python-dotenv==1.0.0
 chromadb==0.4.22
-sentence-transformers==2.2.2
 
-# LangChain dependencies
-langchain==0.1.0
+# LangChain dependencies - using more stable versions
+langchain==0.0.350
 langchain-community==0.0.10
 langchain-core==0.1.10
 langchain-text-splitters==0.0.1
-langchain-unstructured==0.0.10
 
 # Web framework dependencies
 fastapi==0.104.1
@@ -22,8 +20,8 @@ uvicorn[standard]==0.24.0
 pydantic==2.5.0
 
 # Additional dependencies for document processing
-unstructured==0.11.8
 python-multipart==0.0.6
 
-# Remove torch and transformers for now to reduce build complexity
-# These will be installed automatically by sentence-transformers if needed
+# Temporarily remove problematic packages for initial deployment
+# sentence-transformers and langchain-unstructured can be added later
+# unstructured package can be added later if needed

@@ -15,7 +15,7 @@ import requests
 from typing import List, Dict, Any
 
 # LangChain imports for enhanced document processing
-from langchain_unstructured import UnstructuredLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -28,7 +28,7 @@ def load_and_process_document(file_path: str) -> List[Any]:
         raise ValueError("❌ Only PDF files are supported in this enhanced version.")
     
     print(f"📄 Loading document: {file_path}")
-    loader = UnstructuredLoader(file_path)
+    loader = PyPDFLoader(file_path)
     documents = loader.load()
     
     print(f"📝 Document loaded with {len(documents)} pages")
@@ -48,7 +48,7 @@ def create_semantic_chunks(documents: List[Any], chunk_size: int = 1000, chunk_o
 
 # 2. Enhanced Embedding and Vector Storage
 
-def create_vector_store(chunks: List[Any], embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> FAISS:
+def create_vector_store(chunks: List[Any], embedding_model_name: str = "huggingface/sentence-transformers/all-MiniLM-L6-v2") -> FAISS:
     """Create FAISS vector store with enhanced embeddings"""
     print(f"🤖 Creating embeddings using {embedding_model_name}...")
     
@@ -64,7 +64,7 @@ def save_vector_store(vectorstore: FAISS, index_path: str = "faiss_index"):
     vectorstore.save_local(index_path)
     print("✅ Vector store saved successfully")
 
-def load_vector_store(index_path: str = "faiss_index", embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> FAISS:
+def load_vector_store(index_path: str = "faiss_index", embedding_model_name: str = "huggingface/sentence-transformers/all-MiniLM-L6-v2") -> FAISS:
     """Load existing FAISS index"""
     print(f"📂 Loading vector store from {index_path}...")
     embedding_model = HuggingFaceEmbeddings(model_name=embedding_model_name)
