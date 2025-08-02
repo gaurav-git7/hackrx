@@ -11,7 +11,17 @@ python-dotenv
 chromadb
 sentence-transformers
 
+# LangChain dependencies
+langchain
+langchain-community
+langchain-core
+langchain-text-splitters
+
 # Web framework dependencies
 fastapi
 uvicorn[standard]
 pydantic
+
+# Additional dependencies for document processing
+unstructured
+python-multipart
