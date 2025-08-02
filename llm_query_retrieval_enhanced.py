@@ -6,9 +6,9 @@ load_dotenv()
 
 # Workaround for OpenMP runtime error on Windows (PyTorch + faiss)
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# Get HF_TOKEN but don't validate immediately - will check when needed
 hf_token = os.environ.get("HF_TOKEN")
-if not hf_token:
-    raise RuntimeError("Please set the HF_TOKEN environment variable with your Hugging Face API token.")
 
 import json
 import requests
