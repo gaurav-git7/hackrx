@@ -24,6 +24,50 @@ except ImportError:
     print("⚠️ sentence-transformers not available, using keyword search only")
     embedding_model = None
 
+# Performance optimizations
+import requests.adapters
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Create optimized session with connection pooling
+session = requests.Session()
+retry_strategy = Retry(
+    total=2,
+    backoff_factor=0.5,
+    status_forcelist=[429, 500, 502, 503, 504],
+)
+adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=20)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+session.headers.update({
+    'User-Agent': 'InsuranceBot/1.0',
+    'Connection': 'keep-alive'
+})
+
+# Simple cache for API responses (in-memory, will reset on restart)
+response_cache = {}
+CACHE_SIZE_LIMIT = 100
+
+def get_cache_key(prompt: str, api_name: str) -> str:
+    """Generate cache key for API responses"""
+    return f"{api_name}_{hash(prompt) % 10000}"
+
+def get_cached_response(prompt: str, api_name: str) -> Optional[str]:
+    """Get cached response if available"""
+    cache_key = get_cache_key(prompt, api_name)
+    return response_cache.get(cache_key)
+
+def cache_response(prompt: str, api_name: str, response: str):
+    """Cache API response"""
+    if len(response_cache) >= CACHE_SIZE_LIMIT:
+        # Remove oldest entries
+        oldest_keys = list(response_cache.keys())[:20]
+        for key in oldest_keys:
+            del response_cache[key]
+    
+    cache_key = get_cache_key(prompt, api_name)
+    response_cache[cache_key] = response
+
 # Simple document class for our simplified version
 class SimpleDocument:
     def __init__(self, page_content: str, metadata: Dict[str, Any] = None):
@@ -182,9 +226,9 @@ def load_and_process_document_from_memory(file_bytes: BytesIO, file_extension: s
         return []
 
 
-def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[SimpleDocument]:
+def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 800, chunk_overlap: int = 150) -> List[SimpleDocument]:
     """
-    Create semantic chunks from documents with proper embeddings
+    Create semantic chunks from documents with optimized size for faster processing
     """
     chunks = []
     for doc in documents:
@@ -206,25 +250,23 @@ def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 10
 
 
 def create_vector_store(chunks: List[SimpleDocument]) -> List[SimpleDocument]:
-    """
-    Create a simple vector store (just return chunks with embeddings)
-    """
+    """Create vector store from chunks (simplified for performance)"""
     return chunks
 
 
 def save_vector_store(vectorstore, file_path: str):
-    """Save vector store (simplified - just for compatibility)"""
+    """Save vector store (placeholder for compatibility)"""
     pass
 
 
 def load_vector_store(file_path: str):
-    """Load vector store (simplified - just for compatibility)"""
+    """Load vector store (placeholder for compatibility)"""
     return []
 
 
-def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
+def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
     """
-    Search documents using semantic similarity with all-MiniLM-L6-v2 embeddings
+    Optimized search documents using semantic similarity with reduced results for speed
     """
     if not embedding_model:
         # Fallback to keyword search
@@ -249,9 +291,9 @@ def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int =
         return keyword_search(query, vectorstore, top_k)
 
 
-def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
+def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
     """
-    Simple keyword-based search as fallback
+    Optimized keyword-based search with reduced results for speed
     """
     query_words = set(query.lower().split())
     results = []
@@ -267,51 +309,59 @@ def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 5
     return results[:top_k]
 
 
-def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
-    """Retrieve relevant chunks using semantic search"""
+def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
+    """Retrieve relevant chunks using optimized search"""
     return search_documents(query, vectorstore, top_k)
 
 
 def call_mistral_api(prompt: str) -> str:
-    """Call Mistral API with rate limiting and retry logic"""
+    """Call Mistral API with optimized performance and caching"""
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
         return "Error: MISTRAL_API_KEY not found in environment variables"
     
-    url = "https://api.mistral.ai/v1/chat/completions"
+    # Check cache first
+    cached_response = get_cached_response(prompt, "mistral")
+    if cached_response:
+        return cached_response
     
-    data = {
-        "model": "mistral-large-latest",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 1000,
-            "temperature": 0.3
-    }
+    url = "https://api.mistral.ai/v1/chat/completions"
     
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
-    # Add random delay to avoid rate limits
-    time.sleep(random.uniform(1, 3))
+    data = {
+        "model": "mistral-large-latest",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 800,  # Reduced for faster response
+        "temperature": 0.3
+    }
     
-    max_retries = 3
+    # Reduced delay for faster response
+    time.sleep(random.uniform(0.5, 1.5))
+    
+    max_retries = 2  # Reduced retries for speed
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, json=data, headers=headers, timeout=30)
+            response = session.post(url, json=data, headers=headers, timeout=15)  # Faster timeout
             response.raise_for_status()
             
             result = response.json()
             if "choices" in result and len(result["choices"]) > 0:
-                return result["choices"][0]["message"]["content"]
+                answer = result["choices"][0]["message"]["content"]
+                # Cache successful response
+                cache_response(prompt, "mistral", answer)
+                return answer
             else:
                 return "Error: No response from Mistral API"
                 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:  # Rate limit
-                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                wait_time = (1.5 ** attempt) + random.uniform(0, 0.5)  # Faster backoff
                 print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
                 time.sleep(wait_time)
                 if attempt == max_retries - 1:
@@ -329,41 +379,53 @@ def call_mistral_api(prompt: str) -> str:
 
 
 def call_gemini_api(prompt: str) -> str:
-    """Call Gemini API with rate limiting and retry logic"""
+    """Call Gemini API with optimized performance and caching"""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return "Error: GEMINI_API_KEY not found in environment variables"
     
+    # Check cache first
+    cached_response = get_cached_response(prompt, "gemini")
+    if cached_response:
+        return cached_response
+    
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     data = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 1000,
+            "maxOutputTokens": 800,  # Reduced for faster response
         }
     }
     
-    # Add random delay to avoid rate limits
-    time.sleep(random.uniform(1, 3))
+    # Reduced delay for faster response
+    time.sleep(random.uniform(0.5, 1.5))
     
-    max_retries = 3
+    max_retries = 2  # Reduced retries for speed
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, json=data, timeout=30)
+            response = session.post(url, json=data, timeout=15)  # Faster timeout
             response.raise_for_status()
             
             result = response.json()
             if "candidates" in result and len(result["candidates"]) > 0:
-                return result["candidates"][0]["content"]["parts"][0]["text"]
+                answer = result["candidates"][0]["content"]["parts"][0]["text"]
+                # Cache successful response
+                cache_response(prompt, "gemini", answer)
+                return answer
             else:
                 return "Error: No response from Gemini API"
                 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:  # Rate limit
-                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                wait_time = (1.5 ** attempt) + random.uniform(0, 0.5)  # Faster backoff
                 print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
                 time.sleep(wait_time)
                 if attempt == max_retries - 1:
@@ -381,10 +443,15 @@ def call_gemini_api(prompt: str) -> str:
 
 
 def call_huggingface_api(prompt: str) -> str:
-    """Call HuggingFace API with rate limiting and retry logic"""
+    """Call HuggingFace API with optimized performance and caching"""
     api_token = os.environ.get("HF_TOKEN")
     if not api_token:
         return "Error: HF_TOKEN not found in environment variables"
+    
+    # Check cache first
+    cached_response = get_cached_response(prompt, "huggingface")
+    if cached_response:
+        return cached_response
     
     url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
     
@@ -395,24 +462,27 @@ def call_huggingface_api(prompt: str) -> str:
     
     data = {"inputs": prompt}
     
-    # Add random delay to avoid rate limits
-    time.sleep(random.uniform(1, 3))
+    # Reduced delay for faster response
+    time.sleep(random.uniform(0.5, 1.5))
     
-    max_retries = 3
+    max_retries = 2  # Reduced retries for speed
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, headers=headers, json=data, timeout=30)
+            response = session.post(url, headers=headers, json=data, timeout=15)  # Faster timeout
             response.raise_for_status()
             
             result = response.json()
             if isinstance(result, list) and len(result) > 0:
-                return result[0].get("generated_text", "No response from HuggingFace API")
+                answer = result[0].get("generated_text", "No response from HuggingFace API")
+                # Cache successful response
+                cache_response(prompt, "huggingface", answer)
+                return answer
             else:
                 return "Error: No response from HuggingFace API"
                 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:  # Rate limit
-                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                wait_time = (1.5 ** attempt) + random.uniform(0, 0.5)  # Faster backoff
                 print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
                 time.sleep(wait_time)
                 if attempt == max_retries - 1:
@@ -466,13 +536,24 @@ def clean_response(response: str) -> str:
 
 def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str = "auto", custom_prompt: str = None) -> str:
     """
-    Answer question using AI with improved fallback handling
+    Answer question using AI with optimized performance and early returns
     """
     if not top_chunks:
         return "I couldn't find relevant information in the document to answer your question."
     
-    # Build context from chunks
-    context = "\n\n".join([chunk['chunk'] for chunk in top_chunks])
+    # Build context from chunks (limit for faster processing)
+    context_parts = []
+    total_length = 0
+    max_context_length = 3000  # Limit context for faster processing
+    
+    for chunk in top_chunks:
+        chunk_text = chunk['chunk']
+        if total_length + len(chunk_text) > max_context_length:
+            break
+        context_parts.append(chunk_text)
+        total_length += len(chunk_text)
+    
+    context = "\n\n".join(context_parts)
     
     # Use custom prompt if provided, otherwise build default
     if custom_prompt:
@@ -488,7 +569,7 @@ Answer (be direct and concise):"""
     
     # Try different methods based on availability and rate limits
     if method == "auto":
-        # Try Mistral first, then Gemini, then HuggingFace, then fallback
+        # Try Mistral first (fastest), then Gemini, then HuggingFace, then fallback
         try:
             result = call_mistral_api(prompt)
             if not result.startswith("Error:"):

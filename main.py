@@ -287,158 +287,95 @@ async def hackrx_run(
     request: Request,
     token: str = Depends(verify_token)
 ):
-    """
-    Process document and answer questions using AI responses
-    """
+    """Optimized endpoint for processing insurance policy questions"""
     try:
-        # Parse JSON request manually
-        try:
-            body = await request.json()
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-        
-        documents_url = body.get("documents")
+        # Parse JSON body
+        body = await request.json()
+        documents_url = body.get("documents_url")
         questions = body.get("questions", [])
         
         if not documents_url:
-            raise HTTPException(status_code=400, detail="Missing 'documents' field")
+            raise HTTPException(status_code=400, detail="documents_url is required")
+        
         if not questions:
-            raise HTTPException(status_code=400, detail="Missing 'questions' field")
-        if not isinstance(questions, list):
-            raise HTTPException(status_code=400, detail="'questions' must be a list")
+            raise HTTPException(status_code=400, detail="questions array is required")
         
-        print(f"🚀 Processing request with {len(questions)} questions")
-        print(f"📥 Downloading document from: {documents_url}")
+        print(f"📄 Processing {len(questions)} questions for document: {documents_url}")
         
-        # Step 1: Download document from URL
+        # Step 1: Download document with timeout
         try:
-            response = requests.get(documents_url, timeout=30)
+            response = requests.get(documents_url, timeout=15)  # Faster timeout
             response.raise_for_status()
         except requests.exceptions.Timeout:
-            raise HTTPException(status_code=408, detail="Document download timed out. Please try again.")
+            raise HTTPException(status_code=408, detail="Document download timed out")
         except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to download document: {str(e)}")
         
         # Step 2: Process document in memory using BytesIO
-        # Create BytesIO object from response content
-        pdf_bytes = BytesIO(response.content)
-        
-        # Step 3: Load and process document directly from memory
-        print("📄 Loading and processing document...")
         try:
-            # Pass the BytesIO object to a new in-memory processing function
-            print("[DEBUG] Calling load_and_process_document_from_memory...")
-            documents = load_and_process_document_from_memory(pdf_bytes, get_extension_from_url_or_header(documents_url, response))
-            print(f"[DEBUG] load_and_process_document_from_memory returned {len(documents)} documents")
-        except Exception as e:
-            print(f"[ERROR] Failed to process document: {str(e)}")
-            print(f"[ERROR] Exception type: {type(e).__name__}")
-            import traceback
-            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
-        
-        # Step 4: Create semantic chunks
-        print("🔪 Creating semantic chunks...")
-        try:
-            # Use smaller chunks for memory optimization on free tier
-            print("[DEBUG] Calling create_semantic_chunks...")
-            chunks = create_semantic_chunks(documents, chunk_size=800, chunk_overlap=150)
-            print(f"[DEBUG] create_semantic_chunks returned {len(chunks)} chunks")
-        except Exception as e:
-            print(f"[ERROR] Failed to create chunks: {str(e)}")
-            print(f"[ERROR] Exception type: {type(e).__name__}")
-            import traceback
-            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"Failed to create chunks: {str(e)}")
-        
-        # Step 5: Generate document store
-        print("🤖 Creating document store...")
-        try:
-            print("[DEBUG] Calling create_vector_store...")
-            vectorstore = create_vector_store(chunks)
-            print(f"[DEBUG] create_vector_store returned vectorstore with {len(vectorstore)} items")
-        except Exception as e:
-            print(f"[ERROR] Failed to create document store: {str(e)}")
-            print(f"[ERROR] Exception type: {type(e).__name__}")
-            import traceback
-            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"Failed to create document store: {str(e)}")
-        
-        # Step 6: Process each question with real AI responses
-        answers = []
-        for i, question in enumerate(questions, 1):
-            print(f"\n---\n🔍 Query {i}: {question}")
-            print(f"🔍 Processing question {i}: {question}")
+            pdf_bytes = BytesIO(response.content)
             
-            # 🔧 NEW: Query expansion
-            expanded_queries = expand_query(question)
-            
-            # 🔧 NEW: Multi-strategy search
-            all_chunks = []
-            
-            # Strategy 1: Original semantic search
-            print("🔍 Strategy 1: Semantic search")
-            semantic_chunks = retrieve_relevant_chunks(question, vectorstore, top_k=5)
-            all_chunks.extend(semantic_chunks)
-            
-            # Strategy 2: Hybrid search (simplified version)
-            print("🔍 Strategy 2: Hybrid search")
-            hybrid_chunks = hybrid_search(question, vectorstore, top_k=5)
-            all_chunks.extend(hybrid_chunks)
-            
-            # Strategy 3: Expanded query search
-            print("🔍 Strategy 3: Expanded query search")
-            for expanded_query in expanded_queries[:5]:  # Use top 5 expanded queries
-                expanded_chunks = retrieve_relevant_chunks(expanded_query, vectorstore, top_k=3)
-                all_chunks.extend(expanded_chunks)
-            
-            # Deduplicate and get top chunks
-            unique_chunks = {}
-            for doc, score in all_chunks:
-                if doc.page_content not in unique_chunks:
-                    unique_chunks[doc.page_content] = (doc, score)
-            
-            # Sort by score and get top 8 (increased from 5)
-            sorted_chunks = sorted(unique_chunks.values(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0)
-            top_chunks = sorted_chunks[:8]
-            
-            # Print search scores for debugging
-            print("Top search scores:", [round(c[1], 4) for c in top_chunks])
-            best_score = top_chunks[0][1] if top_chunks else None
-            print(f"Best search score: {best_score}")
-            
-            #  IMPROVED: Use real AI to generate answer with fallback handling
-            context = "\n\n".join([c[0].page_content for c in top_chunks])
-            print(f"Context passed to LLM (first 500 chars):\n{context[:500]}\n---")
-            prompt = build_insurance_prompt(context, question)
-            
-            # 🔧 NEW: Check confidence and generate answer with improved fallback
+            # Step 3: Load and process document directly from memory
+            print("📄 Loading and processing document...")
             try:
-                # Convert tuples to expected dictionary format
-                formatted_chunks = [{'chunk': c[0].page_content} for c in top_chunks]
-                print(f"🔧 Calling Mistral with {len(formatted_chunks)} chunks")
-                answer = answer_question(
-                    question,
-                    top_chunks=formatted_chunks,
-                    method="auto",  # This will try Mistral first, then Gemini, then HuggingFace, then fallback
-                    custom_prompt=prompt
-                )
-                print("LLM answer:", answer)
+                documents = load_and_process_document_from_memory(pdf_bytes, get_extension_from_url_or_header(documents_url, response))
             except Exception as e:
-                print(f"❌ All AI APIs failed: {str(e)}")
-                # Generate fallback answer from context
-                context = "\n\n".join([c[0].page_content for c in top_chunks])
-                answer = generate_fallback_answer(question, context)
-                print("Fallback answer:", answer)
+                print(f"[ERROR] Failed to process document: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
             
-            answers.append(answer.strip())
-            print(f"✅ Final answer for query {i}: {answer.strip()}")
-        
-        print(f"🎉 Successfully processed {len(answers)} questions")
-        return {"answers": answers}
-        
+            if not documents:
+                raise HTTPException(status_code=500, detail="No content could be extracted from the document")
+            
+            # Step 4: Create chunks (optimized for speed)
+            print("🔪 Creating semantic chunks...")
+            chunks = create_semantic_chunks(documents, chunk_size=800, chunk_overlap=150)
+            
+            # Step 5: Create vector store
+            print("🗄️ Creating vector store...")
+            vectorstore = create_vector_store(chunks)
+            
+            # Step 6: Process each question
+            answers = []
+            for i, question in enumerate(questions):
+                print(f"🔍 Processing question {i+1}: {question}")
+                
+                try:
+                    # Use optimized search with fewer results
+                    relevant_chunks = retrieve_relevant_chunks(question, vectorstore, top_k=3)
+                    
+                    if not relevant_chunks:
+                        answers.append("I couldn't find relevant information in the document to answer your question.")
+                        continue
+                    
+                    # Convert to format expected by answer_question
+                    top_chunks = [{"chunk": chunk[0].page_content} for chunk in relevant_chunks]
+                    
+                    # Build insurance-specific prompt for better answers
+                    context = "\n\n".join([chunk["chunk"] for chunk in top_chunks])
+                    custom_prompt = build_insurance_prompt(context, question)
+                    
+                    # Get answer with optimized method
+                    answer = answer_question(question, top_chunks, method="auto", custom_prompt=custom_prompt)
+                    answers.append(answer)
+                    
+                    print(f"✅ Answer {i+1} completed")
+                    
+                except Exception as e:
+                    print(f"❌ Error processing question {i+1}: {str(e)}")
+                    answers.append(f"Error processing question: {str(e)}")
+            
+            print(f"🎉 Successfully processed {len(questions)} questions")
+            return {"answers": answers}
+            
+        except Exception as e:
+            print(f"[ERROR] Processing error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+        print(f"[ERROR] Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.get("/health")
 async def health_check():
