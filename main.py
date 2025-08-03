@@ -383,7 +383,7 @@ async def hackrx_run(
                 print(f"Context passed to LLM (first 500 chars):\n{context[:500]}\n---")
                 prompt = build_insurance_prompt(context, question)
                 
-                # 🔧 NEW: Check confidence and generate answer
+                # 🔧 NEW: Check confidence and generate answer with improved fallback
                 try:
                     # Convert tuples to expected dictionary format
                     formatted_chunks = [{'chunk': c[0].page_content} for c in top_chunks]
@@ -391,28 +391,16 @@ async def hackrx_run(
                     answer = answer_question(
                         question,
                         top_chunks=formatted_chunks,
-                        method="gemini",
+                        method="auto",  # This will try Gemini first, then HuggingFace, then fallback
                         custom_prompt=prompt
                     )
-                    print("LLM (Gemini) answer:", answer)
+                    print("LLM answer:", answer)
                 except Exception as e:
-                    print(f"❌ Gemini failed with error: {str(e)}")
-                    print(f"❌ Error type: {type(e).__name__}")
-                    try:
-                        # Convert tuples to expected dictionary format
-                        formatted_chunks = [{'chunk': c[0].page_content} for c in top_chunks]
-                        print(f"🔧 Calling HuggingFace with {len(formatted_chunks)} chunks")
-                        answer = answer_question(
-                            question,
-                            top_chunks=formatted_chunks,
-                            method="huggingface",
-                            custom_prompt=prompt
-                        )
-                        print("LLM (HuggingFace) answer:", answer)
-                    except Exception as e2:
-                        print(f"❌ HuggingFace failed with error: {str(e2)}")
-                        print(f"❌ Error type: {type(e2).__name__}")
-                        answer = "Unable to process this question at the moment."
+                    print(f"❌ All AI APIs failed: {str(e)}")
+                    # Generate fallback answer from context
+                    context = "\n\n".join([c[0].page_content for c in top_chunks])
+                    answer = generate_fallback_answer(question, context)
+                    print("Fallback answer:", answer)
                 
                 answers.append(answer.strip())
                 print(f"✅ Final answer for query {i}: {answer.strip()}")

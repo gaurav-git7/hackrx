@@ -1,317 +1,354 @@
 import os
-from dotenv import load_dotenv
-import json
+import tempfile
 import requests
+from typing import List, Dict, Any, Tuple, Optional
 import re
-from typing import List, Dict, Any
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Get HF_TOKEN but don't validate immediately - will check when needed
-hf_token = os.environ.get("HF_TOKEN")
-
-# Simple document class
+# Simple document class for our simplified version
 class SimpleDocument:
     def __init__(self, page_content: str, metadata: Dict[str, Any] = None):
         self.page_content = page_content
         self.metadata = metadata or {}
 
-# 1. Enhanced Document Loading and Processing
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """Extract text from PDF using basic text extraction"""
+    try:
+        # Try to read as text first (in case it's actually a text file)
+        with open(pdf_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            # Check if it looks like readable text
+            if len(content) > 100 and not any(char in content for char in ['\x00', '\x01', '\x02', '\x03']):
+                return content
+    except:
+        pass
+    
+    try:
+        # Try to read as binary and extract text
+        with open(pdf_path, 'rb') as f:
+            content = f.read()
+            
+        # Simple text extraction from binary content
+        # Look for text patterns in the binary data
+        text_content = ""
+        
+        # Try to decode as UTF-8
+        try:
+            decoded = content.decode('utf-8', errors='ignore')
+            # Extract readable text
+            lines = decoded.split('\n')
+            for line in lines:
+                # Check if line contains readable text
+                if len(line.strip()) > 10 and not any(char in line for char in ['\x00', '\x01', '\x02', '\x03']):
+                    # Remove binary artifacts
+                    clean_line = re.sub(r'[^\x20-\x7E\n\r\t]', '', line)
+                    if len(clean_line.strip()) > 5:
+                        text_content += clean_line + '\n'
+        except:
+            pass
+        
+        # If no readable text found, try to extract from PDF structure
+        if not text_content.strip():
+            # Look for PDF text objects
+            content_str = str(content)
+            # Find text between BT and ET markers (PDF text objects)
+            text_objects = re.findall(r'BT\s*(.*?)\s*ET', content_str, re.DOTALL)
+            for obj in text_objects:
+                # Extract text from text objects
+                text_parts = re.findall(r'\(([^)]+)\)', obj)
+                for part in text_parts:
+                    if len(part.strip()) > 2:
+                        text_content += part + ' '
+        
+        return text_content.strip() if text_content.strip() else "PDF content could not be extracted. Please provide a text file instead."
+        
+    except Exception as e:
+        return f"Error extracting text from PDF: {str(e)}. Please provide a text file instead."
 
 def load_and_process_document(file_path: str) -> List[SimpleDocument]:
-    """Load and process document using simple text processing"""
-    print(f"📄 Loading document: {file_path}")
-    
-    documents = []
+    """
+    Load and process document from file path
+    """
     try:
-        # For now, we'll create a simple text document
-        # In a real implementation, you'd need to handle PDF processing differently
-        # This is a placeholder that creates a simple document for testing
+        # Check file extension
+        file_ext = os.path.splitext(file_path)[1].lower()
         
-        # Read the file as text (this won't work for PDFs, but it's a fallback)
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
-            content = file.read()
-            
-        if content.strip():
-            doc = SimpleDocument(
-                page_content=content,
-                metadata={"source": file_path, "page": 1}
-            )
-            documents.append(doc)
+        if file_ext == '.pdf':
+            # Extract text from PDF
+            text_content = extract_text_from_pdf(file_path)
+        else:
+            # Read as text file
+            with open(file_path, 'r', encoding='utf-8') as f:
+                text_content = f.read()
         
-        print(f"📝 Document loaded: {len(documents)} sections")
+        # Create a single document
+        document = SimpleDocument(text_content, {"source": file_path})
+        return [document]
+        
     except Exception as e:
-        print(f"❌ Error loading document: {str(e)}")
-        # Create a fallback document with error message
-        doc = SimpleDocument(
-            page_content="Document could not be loaded. Please ensure the file is accessible and in a supported format.",
-            metadata={"source": file_path, "page": 1, "error": str(e)}
-        )
-        documents.append(doc)
-    
-    return documents
+        print(f"Error loading document: {str(e)}")
+        return [SimpleDocument(f"Error loading document: {str(e)}", {"source": file_path})]
 
 def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[SimpleDocument]:
-    """Create simple text chunks"""
-    print("🔪 Creating text chunks...")
+    """
+    Create semantic chunks from documents
+    """
     chunks = []
     
     for doc in documents:
         text = doc.page_content
         words = text.split()
         
-        # Create chunks based on word count
+        # Create overlapping chunks
         for i in range(0, len(words), chunk_size - chunk_overlap):
             chunk_words = words[i:i + chunk_size]
-            chunk_text = " ".join(chunk_words)
+            chunk_text = ' '.join(chunk_words)
             
             if chunk_text.strip():
                 chunk_doc = SimpleDocument(
-                    page_content=chunk_text,
-                    metadata=doc.metadata.copy()
+                    chunk_text,
+                    {**doc.metadata, "chunk_index": i // (chunk_size - chunk_overlap)}
                 )
                 chunks.append(chunk_doc)
     
-    print(f"✅ Created {len(chunks)} text chunks")
     return chunks
-
-# 2. Enhanced Embedding and Vector Storage
 
 def create_vector_store(chunks: List[SimpleDocument]) -> List[SimpleDocument]:
-    """Create simple document store for keyword search"""
-    print("📚 Creating simple document store for keyword search...")
-    
-    # Add index to metadata for better tracking
-    for i, chunk in enumerate(chunks):
-        chunk.metadata["index"] = i
-    
-    print(f"✅ Document store created with {len(chunks)} documents")
+    """
+    Create a simple document store (no vector embeddings in simplified version)
+    """
     return chunks
 
-def save_vector_store(vectorstore, index_path: str = "faiss_index"):
-    """Save document store locally (simplified version)"""
-    print(f"💾 Saving document store to {index_path}...")
-    print("⚠️ Document store saving not implemented in simplified version")
-    # In a simplified version, we don't save the document store
-    # It's recreated each time from the PDF
+def save_vector_store(vectorstore, file_path: str):
+    """
+    Save vector store (not implemented in simplified version)
+    """
+    print("Vector store saving not implemented in simplified version")
 
-def load_vector_store(index_path: str = "faiss_index"):
-    """Load existing document store (simplified version)"""
-    print(f"📂 Loading document store from {index_path}...")
-    print("⚠️ Document store loading not implemented in simplified version")
-    return None
+def load_vector_store(file_path: str):
+    """
+    Load vector store (not implemented in simplified version)
+    """
+    print("Vector store loading not implemented in simplified version")
+    return []
 
-# 3. Enhanced Search and Retrieval
-
-def search_documents(query: str, vectorstore, top_k: int = 5) -> List[Dict[str, Any]]:
-    """Search documents using keyword-based search"""
-    print(f"🔍 Searching for: '{query}'")
-    
+def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
+    """
+    Search documents using keyword matching
+    """
+    query_words = set(re.findall(r'\b\w+\b', query.lower()))
     results = []
-    query_words = query.lower().split()
     
-    for i, doc in enumerate(vectorstore):
-        content = doc.page_content.lower()
-        score = sum(1 for word in query_words if word in content)
+    for doc in vectorstore:
+        doc_words = set(re.findall(r'\b\w+\b', doc.page_content.lower()))
+        
+        # Calculate similarity score
+        if query_words:
+            intersection = query_words.intersection(doc_words)
+            score = len(intersection) / len(query_words)
+        else:
+            score = 0
+        
         if score > 0:
-            results.append({
-                "chunk": doc.page_content,
-                "score": 1.0 / (score + 1),  # Lower score = better match
-                "index": i,
-                "metadata": doc.metadata
-            })
+            results.append((doc, score))
     
-    # Sort by score and take top_k
-    results.sort(key=lambda x: x["score"])
-    results = results[:top_k]
-    
-    print(f"✅ Found {len(results)} relevant chunks")
-    return results
-
-def is_confident(top_chunks, score_threshold=0.45):
-    """Soft threshold for answer confidence based on FAISS similarity score (lower is better)"""
-    if not top_chunks:
-        return False
-    # If using similarity_search_with_score, top_chunks is a list of (doc, score) tuples
-    best_score = top_chunks[0][1] if isinstance(top_chunks[0], tuple) else top_chunks[0]["score"]
-    return best_score < score_threshold
-
-def retrieve_relevant_chunks(query, vectorstore, top_k=8):
-    """Fetch the most relevant chunks for a query using keyword search"""
-    print("🔍 Using keyword-based search")
-    results = []
-    query_words = query.lower().split()
-    
-    for i, doc in enumerate(vectorstore):
-        content = doc.page_content.lower()
-        score = sum(1 for word in query_words if word in content)
-        if score > 0:
-            results.append((doc, 1.0 / (score + 1)))  # (doc, score) tuple format
-    
-    # Sort by score (lowest = best match) and take top_k
-    results.sort(key=lambda x: x[1])
+    # Sort by score and return top_k
+    results.sort(key=lambda x: x[1], reverse=True)
     return results[:top_k]
 
-# 4. Enhanced Question Answering with External APIs
+def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
+    """
+    Retrieve relevant chunks using keyword search
+    """
+    print("🔍 Using keyword-based search")
+    return search_documents(query, vectorstore, top_k)
 
-def answer_with_gemini(query: str, top_chunks: List[Dict[str, Any]], api_key: str = None, custom_prompt: str = None) -> str:
-    """Use Google Gemini API for question answering"""
-    if not api_key:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("Please set GEMINI_API_KEY environment variable or pass api_key parameter")
-    context = "\n\n".join([c["chunk"] for c in top_chunks])
-    prompt = custom_prompt if custom_prompt else f"You are a helpful assistant that answers questions based on the provided document context. \n\nInstructions:\n1. Answer the question based ONLY on the provided context\n2. If the answer is not in the context, say \"I cannot find the answer in the provided context\"\n3. Be specific and accurate - include exact numbers, dates, and conditions\n4. Use bullet points if the answer has multiple parts\n5. Keep answers concise but complete\n6. If the context mentions waiting periods, coverage limits, or specific conditions, include them\n\nContext:\n{context}\n\nQuestion: {query}\n\nAnswer:"
-    headers = {
-        "Content-Type": "application/json"
-    }
-    data = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": prompt
-                    }
-                ]
-            }
-        ],
-        "generationConfig": {
-            "maxOutputTokens": 500,
-            "temperature": 0.3
-        }
-    }
-    try:
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}", 
-            headers=headers, 
-            json=data,
-            timeout=30  # 30 second timeout
-        )
-        response.raise_for_status()
-        return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except requests.exceptions.Timeout:
-        return "Sorry, the request timed out. Please try again."
-    except requests.exceptions.RequestException as e:
-        return f"Error communicating with Gemini API: {str(e)}"
-
-def answer_with_huggingface(query: str, top_chunks: List[Dict[str, Any]], model_name: str = "mistralai/Mistral-7B-Instruct-v0.2", custom_prompt: str = None) -> str:
-    """Use Hugging Face Inference API for question answering"""
-    if not hf_token:
-        raise RuntimeError("Please set the HF_TOKEN environment variable")
-    context = "\n\n".join([c["chunk"] for c in top_chunks])
-    prompt = custom_prompt if custom_prompt else f"<s>[INST] Based on the following context, answer the question. If the answer cannot be found in the context, say \"I cannot find the answer in the provided context.\"\n\nContext:\n{context}\n\nQuestion: {query} [/INST]"
-    headers = {
-        "Authorization": f"Bearer {hf_token}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 500,
-            "temperature": 0.3,
-            "do_sample": True
-        }
-    }
-    try:
-        response = requests.post(
-            f"https://api-inference.huggingface.co/models/{model_name}", 
-            headers=headers, 
-            json=data,
-            timeout=60  # 60 second timeout for HuggingFace
-        )
-        response.raise_for_status()
-        return response.json()[0]["generated_text"].split("[/INST]")[-1].strip()
-    except requests.exceptions.Timeout:
-        return "Sorry, the request timed out. Please try again."
-    except requests.exceptions.RequestException as e:
-        return f"Error communicating with HuggingFace API: {str(e)}"
-
-def answer_question(query: str, top_chunks: List[Dict[str, Any]], method: str = "gemini", custom_prompt: str = None, **kwargs) -> str:
-    """Answer question using specified method"""
-    if method.lower() == "gemini":
-        return answer_with_gemini(query, top_chunks, custom_prompt=custom_prompt, **kwargs)
-    elif method.lower() == "huggingface":
-        return answer_with_huggingface(query, top_chunks, custom_prompt=custom_prompt, **kwargs)
+def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str = "gemini", custom_prompt: str = None) -> str:
+    """
+    Answer question using AI models with improved fallback handling
+    """
+    # Prepare context from chunks
+    context = "\n\n".join([chunk['chunk'] for chunk in top_chunks])
+    
+    # Use custom prompt if provided, otherwise use default
+    if custom_prompt:
+        prompt = custom_prompt
     else:
-        raise ValueError("method must be 'gemini' or 'huggingface'")
+        prompt = f"""
+        Based on the following context, answer the question. If the context doesn't contain enough information, say so clearly.
+        
+        Context:
+        {context}
+        
+        Question: {question}
+        
+        Answer:
+        """
+    
+    # Try Gemini first
+    if method == "gemini" or method == "auto":
+        try:
+            return call_gemini_api(prompt)
+        except Exception as e:
+            print(f"❌ Gemini failed: {str(e)}")
+            if method == "auto":
+                # Fallback to HuggingFace
+                try:
+                    return call_huggingface_api(prompt)
+                except Exception as e2:
+                    print(f"❌ HuggingFace also failed: {str(e2)}")
+                    return generate_fallback_answer(question, context)
+            else:
+                raise e
+    
+    # Try HuggingFace
+    elif method == "huggingface":
+        try:
+            return call_huggingface_api(prompt)
+        except Exception as e:
+            print(f"❌ HuggingFace failed: {str(e)}")
+            return generate_fallback_answer(question, context)
+    
+    else:
+        return generate_fallback_answer(question, context)
 
-# 5. Enhanced Output Formatting
-
-def format_output(query: str, answer: str, top_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {
-        "query": query,
-        "answer": answer,
-        "sources": [
-            {
-                "chunk": c["chunk"],
-                "score": c["score"],
-                "index": c["index"],
-                "metadata": c.get("metadata", {})
-            } for c in top_chunks
-        ]
+def call_gemini_api(prompt: str) -> str:
+    """
+    Call Gemini API with improved error handling
+    """
+    import os
+    import requests
+    
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise Exception("GEMINI_API_KEY not found in environment variables")
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }],
+        "generationConfig": {
+            "temperature": 0.3,
+            "topK": 40,
+            "topP": 0.95,
+            "maxOutputTokens": 1024,
+        }
     }
+    
+    try:
+        response = requests.post(url, json=data, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        if "candidates" in result and len(result["candidates"]) > 0:
+            return result["candidates"][0]["content"]["parts"][0]["text"]
+        else:
+            raise Exception("No response from Gemini API")
+            
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            raise Exception(f"Rate limit exceeded for Gemini API. Please wait a moment and try again.")
+        else:
+            raise Exception(f"Gemini API error: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        raise Exception(f"Error communicating with Gemini API: {str(e)}")
 
-# 6. Main Pipeline Functions
+def call_huggingface_api(prompt: str) -> str:
+    """
+    Call HuggingFace API with improved error handling
+    """
+    import os
+    import requests
+    
+    api_token = os.environ.get("HF_TOKEN")
+    if not api_token:
+        raise Exception("HF_TOKEN not found in environment variables")
+    
+    url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
+    
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {"inputs": prompt}
+    
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=60)
+        response.raise_for_status()
+        
+        result = response.json()
+        if isinstance(result, list) and len(result) > 0:
+            return result[0]["generated_text"]
+        else:
+            raise Exception("No response from HuggingFace API")
+            
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            raise Exception(f"Rate limit exceeded for HuggingFace API. Please wait a moment and try again.")
+        else:
+            raise Exception(f"HuggingFace API error: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        raise Exception(f"Error communicating with HuggingFace API: {str(e)}")
+
+def generate_fallback_answer(question: str, context: str) -> str:
+    """
+    Generate a simple answer from context without using external APIs
+    """
+    question_lower = question.lower()
+    context_lower = context.lower()
+    
+    # Look for key terms in the question
+    key_terms = []
+    for term in ["maternity", "waiting period", "pre-existing", "coverage", "exclusion", "premium", "claim", "hospital", "surgery", "medication", "diagnosis", "treatment", "policy", "renewal", "grace period"]:
+        if term in question_lower:
+            key_terms.append(term)
+    
+    # Find relevant sentences from context
+    sentences = context.split('.')
+    relevant_sentences = []
+    
+    for sentence in sentences:
+        sentence_lower = sentence.lower()
+        for term in key_terms:
+            if term in sentence_lower:
+                relevant_sentences.append(sentence.strip())
+                break
+    
+    if relevant_sentences:
+        # Return the most relevant sentence
+        return relevant_sentences[0] + "."
+    else:
+        # If no specific terms found, return a general response
+        return f"Based on the policy document, I found information that may be relevant to your question about {question}. Please review the document for specific details."
+
+def is_confident(top_chunks: List[Tuple[SimpleDocument, float]], threshold: float = 0.7) -> bool:
+    """
+    Check if we have enough confidence in the search results
+    """
+    if not top_chunks:
+        return False
+    
+    # Calculate average score
+    scores = [score for _, score in top_chunks]
+    avg_score = sum(scores) / len(scores)
+    
+    return avg_score >= threshold
 
 def create_document_index(file_path: str, index_path: str = "faiss_index"):
-    """Complete pipeline to create document index"""
-    print("🚀 Starting document indexing pipeline...")
-    
-    # Step 1: Load document
+    """
+    Create document index (simplified version)
+    """
     documents = load_and_process_document(file_path)
-    
-    # Step 2: Create semantic chunks
     chunks = create_semantic_chunks(documents)
-    
-    # Step 3: Create vector store
     vectorstore = create_vector_store(chunks)
-    
-    # Step 4: Save vector store
-    save_vector_store(vectorstore, index_path)
-    
-    print("✅ Document indexing completed!")
     return vectorstore
 
-def query_documents(query: str, vectorstore, method: str = "gemini") -> Dict[str, Any]:
-    """Complete pipeline to query documents"""
-    print(f"🔍 Processing query: '{query}'")
-    
-    # Step 1: Search for relevant chunks
-    top_chunks = search_documents(query, vectorstore)
-    
-    # Step 2: Generate answer
-    answer = answer_question(query, top_chunks, method=method)
-    
-    # Step 3: Format output
-    output = format_output(query, answer, top_chunks)
-    
-    print("✅ Query processing completed!")
-    return output
-
-# Example usage
-if __name__ == "__main__":
-    # Configuration
-    doc_path = "sample_policy.pdf"
-    index_path = "faiss_index"
-    
-    # Check if index already exists
-    if os.path.exists(index_path):
-        print("📂 Loading existing index...")
-        vectorstore = load_vector_store(index_path)
-    else:
-        print("🆕 Creating new index...")
-        vectorstore = create_document_index(doc_path, index_path)
-    
-    # Example queries
-    queries = [
-        "What is the waiting period for pre-existing diseases?",
-        "What are the coverage limits?",
-        "What is the policy period?",
-        "What are the exclusions?"
-    ]
-    
-    for query in queries:
-        print("\n" + "="*60)
-        result = query_documents(query, vectorstore, method="gemini")
-        print(json.dumps(result, indent=2, ensure_ascii=False)) 
+def query_documents(question: str, vectorstore: List[SimpleDocument], top_k: int = 5):
+    """
+    Query documents and get answer
+    """
+    chunks = retrieve_relevant_chunks(question, vectorstore, top_k)
+    formatted_chunks = [{'chunk': chunk[0].page_content} for chunk in chunks]
+    return answer_question(question, formatted_chunks, method="auto") 
