@@ -353,7 +353,7 @@ def call_gemini_api(prompt: str) -> str:
     for attempt in range(max_retries):
         try:
             response = requests.post(url, json=data, timeout=30)
-    response.raise_for_status()
+            response.raise_for_status()
             
             result = response.json()
             if "candidates" in result and len(result["candidates"]) > 0:
@@ -368,7 +368,7 @@ def call_gemini_api(prompt: str) -> str:
                 time.sleep(wait_time)
                 if attempt == max_retries - 1:
                     return "Error: Gemini API rate limit exceeded. Please try again later."
-    else:
+            else:
                 return f"Error communicating with Gemini API: {e}"
         except requests.exceptions.Timeout:
             return "Error: Gemini API request timed out"
