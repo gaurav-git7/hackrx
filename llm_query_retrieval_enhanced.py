@@ -17,9 +17,16 @@ from typing import List, Dict, Any
 # LangChain imports for enhanced document processing
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 import PyPDF2
+
+# Try to import HuggingFaceEmbeddings, fallback to simple embeddings if not available
+try:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+    HUGGINGFACE_AVAILABLE = True
+except ImportError:
+    print("⚠️ HuggingFaceEmbeddings not available, using fallback embeddings")
+    HUGGINGFACE_AVAILABLE = False
 
 # 1. Enhanced Document Loading and Processing
 
@@ -76,6 +83,19 @@ def create_vector_store(chunks: List[Any], embedding_model_name: str = "huggingf
     """Create FAISS vector store with enhanced embeddings"""
     print(f"🤖 Creating embeddings using {embedding_model_name}...")
     
+    if not HUGGINGFACE_AVAILABLE:
+        print("⚠️ Using simple keyword-based search as fallback")
+        # Create a simple document store without embeddings
+        from langchain.schema import Document
+        simple_docs = []
+        for i, chunk in enumerate(chunks):
+            simple_docs.append(Document(
+                page_content=chunk.page_content,
+                metadata={"index": i, "source": chunk.metadata.get("source", "unknown")}
+            ))
+        # Return a simple document list that can be searched
+        return simple_docs
+    
     try:
         embedding_model = HuggingFaceEmbeddings(
             model_name=embedding_model_name,
@@ -99,15 +119,25 @@ def create_vector_store(chunks: List[Any], embedding_model_name: str = "huggingf
         print(f"✅ Vector store created with fallback model: {len(chunks)} embeddings")
         return vectorstore
 
-def save_vector_store(vectorstore: FAISS, index_path: str = "faiss_index"):
+def save_vector_store(vectorstore, index_path: str = "faiss_index"):
     """Save FAISS index locally"""
     print(f"💾 Saving vector store to {index_path}...")
-    vectorstore.save_local(index_path)
-    print("✅ Vector store saved successfully")
+    
+    # Check if we have a FAISS vectorstore that can be saved
+    if hasattr(vectorstore, 'save_local'):
+        vectorstore.save_local(index_path)
+        print("✅ Vector store saved successfully")
+    else:
+        print("⚠️ Cannot save simple document list, skipping save")
 
-def load_vector_store(index_path: str = "faiss_index", embedding_model_name: str = "huggingface/sentence-transformers/all-MiniLM-L6-v2") -> FAISS:
+def load_vector_store(index_path: str = "faiss_index", embedding_model_name: str = "huggingface/sentence-transformers/all-MiniLM-L6-v2"):
     """Load existing FAISS index"""
     print(f"📂 Loading vector store from {index_path}...")
+    
+    if not HUGGINGFACE_AVAILABLE:
+        print("⚠️ HuggingFace not available, cannot load vector store")
+        return None
+    
     try:
         embedding_model = HuggingFaceEmbeddings(
             model_name=embedding_model_name,
@@ -123,21 +153,43 @@ def load_vector_store(index_path: str = "faiss_index", embedding_model_name: str
 
 # 3. Enhanced Search and Retrieval
 
-def search_documents(query: str, vectorstore: FAISS, top_k: int = 5) -> List[Dict[str, Any]]:
+def search_documents(query: str, vectorstore, top_k: int = 5) -> List[Dict[str, Any]]:
     """Search documents using enhanced similarity search"""
     print(f"🔍 Searching for: '{query}'")
     
-    # Use similarity search with metadata
-    docs_and_scores = vectorstore.similarity_search_with_score(query, k=top_k)
-    
-    results = []
-    for i, (doc, score) in enumerate(docs_and_scores):
-        results.append({
-            "chunk": doc.page_content,
-            "score": float(score),
-            "index": i,
-            "metadata": doc.metadata
-        })
+    # Check if we have a FAISS vectorstore or fallback document list
+    if hasattr(vectorstore, 'similarity_search_with_score'):
+        # Use similarity search with metadata
+        docs_and_scores = vectorstore.similarity_search_with_score(query, k=top_k)
+        
+        results = []
+        for i, (doc, score) in enumerate(docs_and_scores):
+            results.append({
+                "chunk": doc.page_content,
+                "score": float(score),
+                "index": i,
+                "metadata": doc.metadata
+            })
+    else:
+        # Fallback to simple keyword search
+        print("🔍 Using keyword-based search as fallback")
+        results = []
+        query_words = query.lower().split()
+        
+        for i, doc in enumerate(vectorstore):
+            content = doc.page_content.lower()
+            score = sum(1 for word in query_words if word in content)
+            if score > 0:
+                results.append({
+                    "chunk": doc.page_content,
+                    "score": 1.0 / (score + 1),  # Lower score = better match
+                    "index": i,
+                    "metadata": doc.metadata
+                })
+        
+        # Sort by score and take top_k
+        results.sort(key=lambda x: x["score"])
+        results = results[:top_k]
     
     print(f"✅ Found {len(results)} relevant chunks")
     return results
@@ -152,11 +204,28 @@ def is_confident(top_chunks, score_threshold=0.45):
 
 def retrieve_relevant_chunks(query, vectorstore, top_k=8):
     """Fetch the most semantically relevant chunks for a query, sorted by score (lowest first)"""
-    # similarity_search_with_score returns list of (Document, score)
-    top_chunks = vectorstore.similarity_search_with_score(query, k=top_k)
-    # Sort by score (lowest = most similar)
-    top_chunks = sorted(top_chunks, key=lambda x: x[1])
-    return top_chunks
+    # Check if we have a FAISS vectorstore or fallback document list
+    if hasattr(vectorstore, 'similarity_search_with_score'):
+        # similarity_search_with_score returns list of (Document, score)
+        top_chunks = vectorstore.similarity_search_with_score(query, k=top_k)
+        # Sort by score (lowest = most similar)
+        top_chunks = sorted(top_chunks, key=lambda x: x[1])
+        return top_chunks
+    else:
+        # Fallback to simple keyword search
+        print("🔍 Using keyword-based search as fallback")
+        results = []
+        query_words = query.lower().split()
+        
+        for i, doc in enumerate(vectorstore):
+            content = doc.page_content.lower()
+            score = sum(1 for word in query_words if word in content)
+            if score > 0:
+                results.append((doc, 1.0 / (score + 1)))  # (doc, score) tuple format
+        
+        # Sort by score (lowest = best match) and take top_k
+        results.sort(key=lambda x: x[1])
+        return results[:top_k]
 
 # 4. Enhanced Question Answering with External APIs
 

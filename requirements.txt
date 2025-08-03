@@ -19,7 +19,7 @@ langchain-community==0.0.10
 langchain-core==0.1.10
 langchain-text-splitters==0.0.1
 
-# ML/AI dependencies for embeddings and models
+# ML/AI dependencies for embeddings and models (using pre-built wheels)
 sentence-transformers==2.2.2
 transformers==4.35.0
 
