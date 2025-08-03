@@ -33,14 +33,15 @@ class EnhancedPDFExtractor:
         except ImportError:
             logger.warning("PyPDF2 not available")
         
-        # Try to add OCR (for scanned documents)
-        try:
-            import pytesseract
-            import pdf2image
-            self.extraction_methods.append(self._extract_with_ocr)
-            logger.info("OCR capabilities available")
-        except ImportError:
-            logger.warning("OCR dependencies not available")
+        # Try to add OCR (for scanned documents) - disabled for deployment
+        # try:
+        #     import pytesseract
+        #     import pdf2image
+        #     self.extraction_methods.append(self._extract_with_ocr)
+        #     logger.info("OCR capabilities available")
+        # except ImportError:
+        #     logger.warning("OCR dependencies not available")
+        logger.info("OCR disabled for deployment stability")
         
         # Always add basic text extraction as fallback
         self.extraction_methods.append(self._extract_with_basic_text)
@@ -109,29 +110,9 @@ class EnhancedPDFExtractor:
             return ""
     
     def _extract_with_ocr(self, pdf_path: str) -> str:
-        """Extract text using OCR (for scanned/image-based PDFs)"""
-        try:
-            import pytesseract
-            from pdf2image import convert_from_path
-            from PIL import Image
-            
-            # Convert PDF to images
-            images = convert_from_path(pdf_path, dpi=300)
-            
-            text_content = ""
-            for i, image in enumerate(images):
-                # Extract text from image using OCR
-                page_text = pytesseract.image_to_string(image, lang='eng')
-                if page_text:
-                    text_content += page_text + "\n"
-            
-            return text_content.strip()
-        except ImportError:
-            logger.warning("OCR dependencies not available")
-            return ""
-        except Exception as e:
-            logger.warning(f"OCR extraction failed: {str(e)}")
-            return ""
+        """Extract text using OCR (for scanned/image-based PDFs) - DISABLED"""
+        logger.warning("OCR extraction disabled for deployment stability")
+        return ""
     
     def _extract_with_basic_text(self, pdf_path: str) -> str:
         """Basic text extraction as fallback (your original method)"""
