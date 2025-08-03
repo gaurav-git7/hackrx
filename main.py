@@ -7,6 +7,12 @@ import os
 from dotenv import load_dotenv
 import re
 import json
+import google.generativeai as genai
+from pydantic import BaseModel
+from langchain_community.document_loaders import PyPDFLoader, UnstructuredPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
 
 # Load environment variables
 load_dotenv()
@@ -22,6 +28,10 @@ if not GEMINI_API_KEY:
     print("⚠️ Warning: GEMINI_API_KEY not found in environment variables")
 if not HF_TOKEN:
     print("⚠️ Warning: HF_TOKEN not found in environment variables")
+
+# Configure Gemini
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai.GenerativeModel('gemini-pro')
 
 # Determine which models are available (FREE alternatives only)
 AVAILABLE_MODELS = []
@@ -264,159 +274,83 @@ async def test_post_endpoint(request: Request):
             "status": "error"
         }
 
-@app.post("/hackrx/run")
-async def hackrx_run(
-    request: Request,
-    token: str = Depends(verify_token)
-):
-    """
-    Process document and answer questions using AI responses
-    """
-    try:
-        # Parse JSON request manually
+class QueryRequest(BaseModel):
+    documents: str
+    questions: List[str]
+
+class DocumentProcessor:
+    def __init__(self):
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len,
+        )
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
+        self.db = None
+
+    def process_document(self, file_path: str):
         try:
-            body = await request.json()
+            loader = UnstructuredPDFLoader(file_path)
+            documents = loader.load()
+            texts = self.text_splitter.split_documents(documents)
+            self.db = FAISS.from_documents(texts, self.embeddings)
+            return True
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+            print(f"Error processing document: {str(e)}")
+            return False
+
+    def get_relevant_context(self, query: str, k=3):
+        if not self.db:
+            return ""
+        docs = self.db.similarity_search(query, k=k)
+        return "\n".join([doc.page_content for doc in docs])
+
+def download_pdf(url: str) -> str:
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise HTTPException(status_code=400, detail="Could not download PDF")
+    
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+    temp_file.write(response.content)
+    temp_file.close()
+    return temp_file.name
+
+@app.post("/hackrx/run")
+async def process_query(request: QueryRequest):
+    processor = DocumentProcessor()
+    answers = []
+    
+    try:
+        pdf_path = download_pdf(request.documents)
+        if not processor.process_document(pdf_path):
+            raise HTTPException(status_code=400, detail="Failed to process document")
         
-        documents_url = body.get("documents")
-        questions = body.get("questions", [])
-        
-        if not documents_url:
-            raise HTTPException(status_code=400, detail="Missing 'documents' field")
-        if not questions:
-            raise HTTPException(status_code=400, detail="Missing 'questions' field")
-        if not isinstance(questions, list):
-            raise HTTPException(status_code=400, detail="'questions' must be a list")
-        
-        print(f"🚀 Processing request with {len(questions)} questions")
-        print(f"📥 Downloading document from: {documents_url}")
-        
-        # Step 1: Download document from URL
-        try:
-            response = requests.get(documents_url, timeout=30)
-            response.raise_for_status()
-        except requests.exceptions.Timeout:
-            raise HTTPException(status_code=408, detail="Document download timed out. Please try again.")
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
-        
-        # Step 2: Save document to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_file:
-            # Try to decode as text first
-            try:
-                content = response.content.decode('utf-8')
-                tmp_file.write(content.encode('utf-8'))
-            except UnicodeDecodeError:
-                # If it's binary (like PDF), save as binary
-                tmp_file.write(response.content)
-            doc_path = tmp_file.name
-        
-        try:
-            # Step 3: Load and process document
-            print("📄 Loading and processing document...")
-            try:
-                documents = load_and_process_document(doc_path)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
+        for question in request.questions:
+            context = processor.get_relevant_context(question)
+            prompt = f"""Based on the following policy document content:
+            {context}
             
-            # Step 4: Create semantic chunks
-            print("🔪 Creating semantic chunks...")
-            try:
-                # Use smaller chunks for memory optimization on free tier
-                chunks = create_semantic_chunks(documents, chunk_size=800, chunk_overlap=150)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to create chunks: {str(e)}")
+            Question: {question}
             
-            # Step 5: Generate document store
-            print("🤖 Creating document store...")
-            try:
-                vectorstore = create_vector_store(chunks)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to create document store: {str(e)}")
+            Provide a clear and concise answer based only on the information given above. 
+            If the information is not found in the context, state that clearly."""
+
+            response = model.generate_content(prompt)
+            answers.append(response.text)
             
-            # Step 6: Process each question with real AI responses
-            answers = []
-            for i, question in enumerate(questions, 1):
-                print(f"\n---\n🔍 Query {i}: {question}")
-                print(f"🔍 Processing question {i}: {question}")
-                
-                # 🔧 NEW: Query expansion
-                expanded_queries = expand_query(question)
-                
-                # 🔧 NEW: Multi-strategy search
-                all_chunks = []
-                
-                # Strategy 1: Original semantic search
-                print("🔍 Strategy 1: Semantic search")
-                semantic_chunks = retrieve_relevant_chunks(question, vectorstore, top_k=5)
-                all_chunks.extend(semantic_chunks)
-                
-                # Strategy 2: Hybrid search (simplified version)
-                print("🔍 Strategy 2: Hybrid search")
-                hybrid_chunks = hybrid_search(question, vectorstore, top_k=5)
-                all_chunks.extend(hybrid_chunks)
-                
-                # Strategy 3: Expanded query search
-                print("🔍 Strategy 3: Expanded query search")
-                for expanded_query in expanded_queries[:5]:  # Use top 5 expanded queries
-                    expanded_chunks = retrieve_relevant_chunks(expanded_query, vectorstore, top_k=3)
-                    all_chunks.extend(expanded_chunks)
-                
-                # Deduplicate and get top chunks
-                unique_chunks = {}
-                for doc, score in all_chunks:
-                    if doc.page_content not in unique_chunks:
-                        unique_chunks[doc.page_content] = (doc, score)
-                
-                # Sort by score and get top 8 (increased from 5)
-                sorted_chunks = sorted(unique_chunks.values(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0)
-                top_chunks = sorted_chunks[:8]
-                
-                # Print search scores for debugging
-                print("Top search scores:", [round(c[1], 4) for c in top_chunks])
-                best_score = top_chunks[0][1] if top_chunks else None
-                print(f"Best search score: {best_score}")
-                
-                #  IMPROVED: Use real AI to generate answer with fallback handling
-                context = "\n\n".join([c[0].page_content for c in top_chunks])
-                print(f"Context passed to LLM (first 500 chars):\n{context[:500]}\n---")
-                prompt = build_insurance_prompt(context, question)
-                
-                # 🔧 NEW: Check confidence and generate answer with improved fallback
-                try:
-                    # Convert tuples to expected dictionary format
-                    formatted_chunks = [{'chunk': c[0].page_content} for c in top_chunks]
-                    print(f"🔧 Calling Gemini with {len(formatted_chunks)} chunks")
-                    answer = answer_question(
-                        question,
-                        top_chunks=formatted_chunks,
-                        method="auto",  # This will try Gemini first, then HuggingFace, then fallback
-                        custom_prompt=prompt
-                    )
-                    print("LLM answer:", answer)
-                except Exception as e:
-                    print(f"❌ All AI APIs failed: {str(e)}")
-                    # Generate fallback answer from context
-                    context = "\n\n".join([c[0].page_content for c in top_chunks])
-                    answer = generate_fallback_answer(question, context)
-                    print("Fallback answer:", answer)
-                
-                answers.append(answer.strip())
-                print(f"✅ Final answer for query {i}: {answer.strip()}")
-            
-            print(f"🎉 Successfully processed {len(answers)} questions")
-            return {"answers": answers}
-            
-        finally:
-            # Clean up temporary file
-            if os.path.exists(doc_path):
-                os.unlink(doc_path)
-                
-    except requests.RequestException as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    finally:
+        if 'pdf_path' in locals():
+            try:
+                os.unlink(pdf_path)
+            except:
+                pass
+    
+    return {"answers": answers}
 
 @app.get("/health")
 async def health_check():
@@ -425,4 +359,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -11,9 +11,9 @@ class SimpleDocument:
         self.metadata = metadata or {}
 
 def extract_text_from_pdf(pdf_path: str) -> str:
-    """Extract text from PDF using basic text extraction"""
+    """Extract text from PDF using multiple strategies"""
     try:
-        # Try to read as text first (in case it's actually a text file)
+        # Strategy 1: Try to read as text first (in case it's actually a text file)
         with open(pdf_path, 'r', encoding='utf-8') as f:
             content = f.read()
             # Check if it looks like readable text
@@ -23,46 +23,90 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         pass
     
     try:
-        # Try to read as binary and extract text
+        # Strategy 2: Read as binary and try multiple extraction methods
         with open(pdf_path, 'rb') as f:
             content = f.read()
-            
-        # Simple text extraction from binary content
-        # Look for text patterns in the binary data
-        text_content = ""
         
-        # Try to decode as UTF-8
+        # Method 2a: Try UTF-8 decode with error handling
         try:
             decoded = content.decode('utf-8', errors='ignore')
-            # Extract readable text
+            # Extract readable text lines
             lines = decoded.split('\n')
+            text_content = ""
             for line in lines:
-                # Check if line contains readable text
-                if len(line.strip()) > 10 and not any(char in line for char in ['\x00', '\x01', '\x02', '\x03']):
-                    # Remove binary artifacts
-                    clean_line = re.sub(r'[^\x20-\x7E\n\r\t]', '', line)
-                    if len(clean_line.strip()) > 5:
-                        text_content += clean_line + '\n'
+                # Remove binary artifacts and keep readable text
+                clean_line = re.sub(r'[^\x20-\x7E\n\r\t]', '', line)
+                if len(clean_line.strip()) > 10:  # Only keep substantial lines
+                    text_content += clean_line + '\n'
+            
+            if len(text_content.strip()) > 200:  # If we got substantial text
+                return text_content.strip()
         except:
             pass
         
-        # If no readable text found, try to extract from PDF structure
-        if not text_content.strip():
-            # Look for PDF text objects
-            content_str = str(content)
-            # Find text between BT and ET markers (PDF text objects)
-            text_objects = re.findall(r'BT\s*(.*?)\s*ET', content_str, re.DOTALL)
+        # Method 2b: Look for PDF text objects (BT/ET markers)
+        content_str = str(content)
+        text_objects = re.findall(r'BT\s*(.*?)\s*ET', content_str, re.DOTALL)
+        if text_objects:
+            extracted_text = ""
             for obj in text_objects:
                 # Extract text from text objects
                 text_parts = re.findall(r'\(([^)]+)\)', obj)
                 for part in text_parts:
                     if len(part.strip()) > 2:
-                        text_content += part + ' '
+                        extracted_text += part + ' '
+            if extracted_text.strip():
+                return extracted_text.strip()
         
-        return text_content.strip() if text_content.strip() else "PDF content could not be extracted. Please provide a text file instead."
+        # Method 2c: Look for text patterns in binary data
+        # Convert binary to string and look for readable patterns
+        content_str = str(content)
+        
+        # Look for common insurance terms in the binary data
+        insurance_terms = [
+            'policy', 'coverage', 'premium', 'claim', 'hospital', 'surgery', 
+            'maternity', 'waiting', 'period', 'exclusion', 'benefit', 'medical',
+            'insurance', 'health', 'treatment', 'diagnosis', 'medication'
+        ]
+        
+        found_terms = []
+        for term in insurance_terms:
+            if term.lower() in content_str.lower():
+                found_terms.append(term)
+        
+        if found_terms:
+            # Try to extract sentences around found terms
+            sentences = []
+            for term in found_terms:
+                # Find positions of the term
+                term_positions = [m.start() for m in re.finditer(term, content_str, re.IGNORECASE)]
+                for pos in term_positions:
+                    # Extract text around the term
+                    start = max(0, pos - 100)
+                    end = min(len(content_str), pos + 100)
+                    context = content_str[start:end]
+                    # Clean the context
+                    clean_context = re.sub(r'[^\x20-\x7E\n\r\t]', '', context)
+                    if len(clean_context.strip()) > 20:
+                        sentences.append(clean_context.strip())
+            
+            if sentences:
+                return " ".join(sentences[:10])  # Return first 10 sentences
+        
+        # Method 2d: Try to extract any readable text patterns
+        # Look for sequences of printable characters
+        printable_pattern = re.findall(r'[A-Za-z0-9\s\.\,\;\:\!\?\-\(\)]+', content_str)
+        if printable_pattern:
+            # Filter out very short patterns and join
+            meaningful_patterns = [p.strip() for p in printable_pattern if len(p.strip()) > 10]
+            if meaningful_patterns:
+                return " ".join(meaningful_patterns[:20])  # Return first 20 patterns
+        
+        # If all methods fail, return a helpful error message
+        return "The PDF document could not be read properly. This might be due to:\n1. The file being corrupted or password-protected\n2. The file being an image-based PDF (scanned document)\n3. The file being in an unsupported format\n\nPlease provide a text-based PDF or convert the document to text format."
         
     except Exception as e:
-        return f"Error extracting text from PDF: {str(e)}. Please provide a text file instead."
+        return f"Error processing the PDF file: {str(e)}. Please ensure the file is accessible and in a supported format."
 
 def load_and_process_document(file_path: str) -> List[SimpleDocument]:
     """
@@ -276,7 +320,7 @@ def call_huggingface_api(prompt: str) -> str:
     
     try:
         response = requests.post(url, headers=headers, json=data, timeout=60)
-    response.raise_for_status()
+        response.raise_for_status()
         
         result = response.json()
         if isinstance(result, list) and len(result) > 0:
@@ -287,7 +331,7 @@ def call_huggingface_api(prompt: str) -> str:
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:
             raise Exception(f"Rate limit exceeded for HuggingFace API. Please wait a moment and try again.")
-    else:
+        else:
             raise Exception(f"HuggingFace API error: {e.response.status_code} - {e.response.text}")
     except Exception as e:
         raise Exception(f"Error communicating with HuggingFace API: {str(e)}")
@@ -299,9 +343,16 @@ def generate_fallback_answer(question: str, context: str) -> str:
     question_lower = question.lower()
     context_lower = context.lower()
     
+    # Check if context contains error messages or is too short
+    if "error" in context_lower or "could not" in context_lower or "failed" in context_lower:
+        return f"I apologize, but I'm unable to read the policy document properly. The document appears to be in a format that cannot be processed. To answer your question about '{question}', please provide the policy document in a text format or ensure it's a readable PDF file."
+    
+    if len(context.strip()) < 100:
+        return f"I apologize, but the policy document contains very little readable text. To answer your question about '{question}', please provide a properly formatted policy document with clear text content."
+    
     # Look for key terms in the question
     key_terms = []
-    for term in ["maternity", "waiting period", "pre-existing", "coverage", "exclusion", "premium", "claim", "hospital", "surgery", "medication", "diagnosis", "treatment", "policy", "renewal", "grace period"]:
+    for term in ["maternity", "waiting period", "pre-existing", "coverage", "exclusion", "premium", "claim", "hospital", "surgery", "medication", "diagnosis", "treatment", "policy", "renewal", "grace period", "ayush", "cataract", "organ donor", "ncd", "no claim discount", "preventive", "health check"]:
         if term in question_lower:
             key_terms.append(term)
     
@@ -320,8 +371,8 @@ def generate_fallback_answer(question: str, context: str) -> str:
         # Return the most relevant sentence
         return relevant_sentences[0] + "."
     else:
-        # If no specific terms found, return a general response
-        return f"Based on the policy document, I found information that may be relevant to your question about {question}. Please review the document for specific details."
+        # If no specific terms found, provide a helpful response
+        return f"I've reviewed the policy document, but I couldn't find specific information about '{question}'. This could mean either:\n1. The information is not covered in this policy\n2. The document format prevents proper text extraction\n3. The terms might be described differently in the policy\n\nPlease provide a properly formatted text version of the policy document for more accurate answers."
 
 def is_confident(top_chunks: List[Tuple[SimpleDocument, float]], threshold: float = 0.7) -> bool:
     """
