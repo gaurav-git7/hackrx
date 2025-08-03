@@ -1,19 +1,12 @@
-# Minimal dependencies for Render deployment
-# Only using pure Python packages with no compilation required
+# Absolute minimal dependencies for Render deployment
+# Testing with only the most basic packages
 
-# Web framework
-fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.5.0
-
-# HTTP requests
-requests==2.31.0
+# HTTP requests (most basic)
+requests==2.28.2
 
 # Environment variables
 python-dotenv==1.0.0
 
-# File uploads
-python-multipart==0.0.6
-
-# Note: Removed PyPDF2 as it requires Rust compilation
-# Will use alternative PDF processing approach
+# Web framework (minimal)
+fastapi==0.95.2
+uvicorn==0.22.0

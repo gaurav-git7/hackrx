@@ -1,12 +1,12 @@
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import requests
 import tempfile
 import os
 from dotenv import load_dotenv
 import re
+import json
 
 # Load environment variables
 load_dotenv()
@@ -187,13 +187,8 @@ async def startup_event():
 security = HTTPBearer()
 AUTH_TOKEN = "02b1ad646a69f58d41c75bb9ea5f78bbaf30389258623d713ff4115b554377f0"
 
-# Pydantic models
-class HackRxRequest(BaseModel):
-    documents: str  # URL to PDF file
-    questions: List[str]
-
-class HackRxResponse(BaseModel):
-    answers: List[str]
+# Simple request/response models (no Pydantic)
+# We'll handle validation manually
 
 # Authentication dependency
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -252,9 +247,9 @@ async def test_endpoint():
         "available_models": AVAILABLE_MODELS
     }
 
-@app.post("/hackrx/run", response_model=HackRxResponse)
+@app.post("/hackrx/run")
 async def hackrx_run(
-    request: HackRxRequest,
+    request: Request,
     token: str = Depends(verify_token)
 ):
     """
@@ -264,9 +259,21 @@ async def hackrx_run(
         print(f"�� Processing request with {len(request.questions)} questions")
         
         # Step 1: Download document from URL
-        print(f"📥 Downloading document from: {request.documents}")
+        # Parse JSON request manually
+        body = await request.json()
+        documents_url = body.get("documents")
+        questions = body.get("questions", [])
+        
+        if not documents_url:
+            raise HTTPException(status_code=400, detail="Missing 'documents' field")
+        if not questions:
+            raise HTTPException(status_code=400, detail="Missing 'questions' field")
+        if not isinstance(questions, list):
+            raise HTTPException(status_code=400, detail="'questions' must be a list")
+        
+        print(f"📥 Downloading document from: {documents_url}")
         try:
-            response = requests.get(request.documents, timeout=30)
+            response = requests.get(documents_url, timeout=30)
             response.raise_for_status()
         except requests.exceptions.Timeout:
             raise HTTPException(status_code=408, detail="Document download timed out. Please try again.")
@@ -309,7 +316,7 @@ async def hackrx_run(
             
             # Step 6: Process each question with real AI responses
             answers = []
-            for i, question in enumerate(request.questions, 1):
+            for i, question in enumerate(questions, 1):
                 print(f"\n---\n🔍 Query {i}: {question}")
                 print(f"🔍 Processing question {i}: {question}")
                 
@@ -390,7 +397,7 @@ async def hackrx_run(
                 print(f"✅ Final answer for query {i}: {answer.strip()}")
             
             print(f"🎉 Successfully processed {len(answers)} questions")
-            return HackRxResponse(answers=answers)
+            return {"answers": answers}
             
         finally:
             # Clean up temporary file
