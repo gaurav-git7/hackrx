@@ -307,12 +307,12 @@ async def hackrx_run(
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to create chunks: {str(e)}")
             
-            # Step 5: Generate embeddings and build FAISS index
-            print("🤖 Creating vector store...")
+            # Step 5: Generate document store
+            print("🤖 Creating document store...")
             try:
                 vectorstore = create_vector_store(chunks)
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to create vector store: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed to create document store: {str(e)}")
             
             # Step 6: Process each question with real AI responses
             answers = []
@@ -352,10 +352,10 @@ async def hackrx_run(
                 sorted_chunks = sorted(unique_chunks.values(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0)
                 top_chunks = sorted_chunks[:8]
                 
-                # Print FAISS scores for debugging
-                print("Top FAISS scores:", [round(c[1], 4) for c in top_chunks])
+                # Print search scores for debugging
+                print("Top search scores:", [round(c[1], 4) for c in top_chunks])
                 best_score = top_chunks[0][1] if top_chunks else None
-                print(f"Best FAISS score: {best_score}")
+                print(f"Best search score: {best_score}")
                 
                 #  IMPROVED: Use real AI to generate answer with fallback handling
                 context = "\n\n".join([c[0].page_content for c in top_chunks])

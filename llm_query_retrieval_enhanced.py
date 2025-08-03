@@ -254,7 +254,7 @@ def format_output(query: str, answer: str, top_chunks: List[Dict[str, Any]]) -> 
 
 # 6. Main Pipeline Functions
 
-def create_document_index(file_path: str, index_path: str = "faiss_index") -> FAISS:
+def create_document_index(file_path: str, index_path: str = "faiss_index"):
     """Complete pipeline to create document index"""
     print("🚀 Starting document indexing pipeline...")
     
@@ -273,7 +273,7 @@ def create_document_index(file_path: str, index_path: str = "faiss_index") -> FA
     print("✅ Document indexing completed!")
     return vectorstore
 
-def query_documents(query: str, vectorstore: FAISS, method: str = "gemini") -> Dict[str, Any]:
+def query_documents(query: str, vectorstore, method: str = "gemini") -> Dict[str, Any]:
     """Complete pipeline to query documents"""
     print(f"🔍 Processing query: '{query}'")
     
