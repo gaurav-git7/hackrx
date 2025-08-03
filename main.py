@@ -10,11 +10,15 @@ import json
 import mimetypes
 import time
 from io import BytesIO
-# Removed google.generativeai import - not needed for our implementation
-# Removed unnecessary imports - using simplified implementation
+import sys
 
 # Load environment variables
 load_dotenv()
+
+# Add startup logging
+print("🚀 Starting HackRx API...")
+print(f"Python version: {sys.version}")
+print(f"Current working directory: {os.getcwd()}")
 
 # Check if required environment variables are set
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -31,8 +35,6 @@ if not GEMINI_API_KEY:
 if not HF_TOKEN:
     print("⚠️ Warning: HF_TOKEN not found in environment variables")
 
-# Removed genai configuration - using our own API calls
-
 # Determine which models are available (FREE alternatives only)
 AVAILABLE_MODELS = []
 if MISTRAL_API_KEY:
@@ -44,8 +46,10 @@ if HF_TOKEN:
 
 print(f"🚀 Available models: {AVAILABLE_MODELS}")
 
-# Import our enhanced vector database functions
+# Test imports before creating the app
+print("🔧 Testing imports...")
 try:
+    # Import our enhanced vector database functions
     from llm_query_retrieval_enhanced import (
         load_and_process_document,
         load_and_process_document_from_memory,
@@ -65,113 +69,26 @@ try:
 except ImportError as e:
     print(f"❌ Import error: {e}")
     # Fallback imports
-    from llm_query_retrieval_enhanced import (
-        load_and_process_document,
-        load_and_process_document_from_memory,
-        answer_question
-    )
-    print("⚠️ Using fallback imports")
+    try:
+        from llm_query_retrieval_enhanced import (
+            load_and_process_document,
+            load_and_process_document_from_memory,
+            answer_question
+        )
+        print("⚠️ Using fallback imports")
+    except ImportError as e2:
+        print(f"❌ Critical import error: {e2}")
+        sys.exit(1)
 
-# Query expansion dictionary for insurance terms
-INSURANCE_SYNONYMS = {
-    "maternity": ["pregnancy", "childbirth", "delivery", "baby", "birth", "maternal"],
-    "waiting period": ["exclusion period", "time limit", "coverage delay", "waiting time", "exclusion"],
-    "pre-existing": ["pre-existing disease", "existing condition", "prior condition", "chronic"],
-    "coverage": ["cover", "benefit", "protection", "insurance", "policy"],
-    "exclusion": ["excluded", "not covered", "limitation", "restriction"],
-    "premium": ["payment", "cost", "fee", "amount", "price"],
-    "claim": ["claiming", "reimbursement", "payment", "benefit"],
-    "hospital": ["hospitalization", "medical facility", "clinic", "healthcare center"],
-    "surgery": ["operation", "procedure", "surgical", "medical procedure"],
-    "medication": ["medicine", "drug", "prescription", "treatment"],
-    "diagnosis": ["diagnostic", "test", "examination", "medical test"],
-    "treatment": ["therapy", "care", "medical care", "healthcare"],
-    "policy": ["insurance policy", "plan", "coverage", "contract"],
-    "renewal": ["renew", "continue", "extend", "maintain"],
-    "grace period": ["grace", "extension", "additional time", "late payment"]
-}
+print("✅ All imports successful")
 
-def expand_query(query):
-    """Expand query with insurance-related synonyms"""
-    expanded_terms = []
-    query_lower = query.lower()
-    
-    # Add original query
-    expanded_terms.append(query)
-    
-    # Add synonyms for matched terms
-    for term, synonyms in INSURANCE_SYNONYMS.items():
-        if term in query_lower:
-            for synonym in synonyms:
-                expanded_query = query_lower.replace(term, synonym)
-                if expanded_query != query_lower:
-                    expanded_terms.append(expanded_query)
-    
-    # Add key terms from the query
-    key_words = re.findall(r'\b\w+\b', query_lower)
-    for word in key_words:
-        if word in INSURANCE_SYNONYMS:
-            for synonym in INSURANCE_SYNONYMS[word]:
-                expanded_terms.append(synonym)
-    
-    # Remove duplicates and return unique queries
-    unique_queries = list(set(expanded_terms))
-    print(f"🔍 Expanded query '{query}' to {len(unique_queries)} variations")
-    return unique_queries
+# Create FastAPI app
+app = FastAPI(title="HackRx Insurance Bot", version="1.0.0")
+security = HTTPBearer()
+AUTH_TOKEN = "02b1ad646a69f58d41c75bb9ea5f78bbaf30389258623d713ff4115b554377f0"
 
-def keyword_search(query, vectorstore, top_k=5):
-    """Keyword-based search using exact word matching"""
-    query_words = re.findall(r'\b\w+\b', query.lower())
-    all_chunks = []
-    
-    # Search through document list
-    for doc in vectorstore:
-        doc_content = doc.page_content.lower()
-        score = 0
-        
-        # Count exact word matches
-        for word in query_words:
-            if word in doc_content:
-                score += 1
-        
-        # Normalize score by query length
-        if len(query_words) > 0:
-            score = score / len(query_words)
-        
-        if score > 0:
-            all_chunks.append((doc, score))
-    
-    # Sort by score and return top_k
-    all_chunks.sort(key=lambda x: x[1], reverse=True)
-    return all_chunks[:top_k]
-
-def hybrid_search(query, vectorstore, top_k=5):
-    """Combine different search strategies"""
-    # Get keyword results from retrieve_relevant_chunks
-    semantic_results = retrieve_relevant_chunks(query, vectorstore, top_k=top_k)
-    
-    # Get additional keyword results
-    keyword_results = keyword_search(query, vectorstore, top_k=top_k)
-    
-    # Combine and deduplicate
-    combined = {}
-    
-    # Add semantic results
-    for doc, score in semantic_results:
-        combined[doc.page_content] = (doc, 1.0 - score)  # Convert to similarity score
-    
-    # Add keyword results
-    for doc, score in keyword_results:
-        if doc.page_content in combined:
-            # Average the scores
-            existing_score = combined[doc.page_content][1]
-            combined[doc.page_content] = (doc, (existing_score + score) / 2)
-        else:
-            combined[doc.page_content] = (doc, score)
-    
-    # Sort by combined score and return top_k
-    sorted_results = sorted(combined.values(), key=lambda x: x[1], reverse=True)
-    return sorted_results[:top_k]
+# Simple request/response models (no Pydantic)
+# We'll handle validation manually
 
 def generate_fallback_answer(question, context):
     """Generate a simple answer from context without using external APIs"""
@@ -202,39 +119,10 @@ def generate_fallback_answer(question, context):
         # If no specific terms found, return a general response
         return f"Based on the policy document, I found information that may be relevant to your question about {question}. Please review the document for specific details."
 
-def get_extension_from_url_or_header(url, response):
-    content_type = response.headers.get('Content-Type', '')
-    if 'pdf' in content_type:
-        return '.pdf'
-    elif 'text' in content_type or 'plain' in content_type:
-        return '.txt'
-    # Fallback: guess from URL
-    ext = os.path.splitext(url)[1]
-    if ext in ['.pdf', '.txt']:
-        return ext
-    return '.bin'  # fallback
-
-# Initialize FastAPI app
-app = FastAPI(title="HackRx Document Q&A API", version="1.0.0")
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize app on startup"""
-    print("🚀 Starting HackRx Document Q&A API...")
-    print(f"📊 Available models: {AVAILABLE_MODELS}")
-    print("✅ API is ready to serve requests!")
-
-# Security
-security = HTTPBearer()
-AUTH_TOKEN = "02b1ad646a69f58d41c75bb9ea5f78bbaf30389258623d713ff4115b554377f0"
-
-# Simple request/response models (no Pydantic)
-# We'll handle validation manually
-
-# Authentication dependency
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verify the authentication token"""
     if credentials.credentials != AUTH_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid authentication token")
+        raise HTTPException(status_code=401, detail="Invalid token")
     return credentials.credentials
 
 # 🔧 NEW: Confidence scoring function
@@ -261,28 +149,36 @@ Question: {query}
 
 Provide a direct answer with specific details from the policy:"""
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize app on startup"""
+    print("🚀 Starting HackRx Document Q&A API...")
+    print(f"📊 Available models: {AVAILABLE_MODELS}")
+    print("✅ API is ready to serve requests!")
+
 @app.get("/")
 async def root():
+    """Root endpoint"""
     return {
-        "message": "HackRx Document Q&A API is running!",
-        "status": "healthy",
+        "message": "HackRx Insurance Bot API",
         "version": "1.0.0",
-        "available_models": AVAILABLE_MODELS,
-        "note": "Simplified version - document processing limited to text files"
+        "status": "running",
+        "available_models": AVAILABLE_MODELS
     }
 
 @app.get("/test")
 async def test_endpoint():
-    """Simple test endpoint that doesn't require document processing"""
+    """Simple test endpoint"""
     return {
-        "message": "API is working!",
-        "test": "success",
-        "available_models": AVAILABLE_MODELS
+        "message": "Test endpoint working!",
+        "timestamp": time.time(),
+        "python_version": sys.version,
+        "working_directory": os.getcwd()
     }
 
 @app.post("/test-post")
 async def test_post_endpoint(request: Request):
-    """Test POST endpoint to check JSON parsing"""
+    """Test POST endpoint"""
     try:
         body = await request.json()
         return {
@@ -308,9 +204,12 @@ async def hackrx_run(
     Process document and answer questions using AI responses
     """
     try:
+        print("🚀 Starting hackrx_run endpoint...")
+        
         # Parse JSON request manually
         try:
             body = await request.json()
+            print("✅ JSON parsed successfully")
         except Exception as e:
             print(f"❌ JSON parsing error: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
@@ -332,6 +231,7 @@ async def hackrx_run(
         try:
             response = requests.get(documents_url, timeout=30)
             response.raise_for_status()
+            print("✅ Document downloaded successfully")
         except requests.exceptions.Timeout:
             raise HTTPException(status_code=408, detail="Document download timed out. Please try again.")
         except requests.exceptions.RequestException as e:
@@ -418,6 +318,7 @@ async def hackrx_run(
                 answers.append("An error occurred while processing this question.")
         
         # Step 7: Return results
+        print("✅ Successfully processed all questions")
         return {
             "answers": answers,
             "status": "success",
@@ -473,6 +374,18 @@ async def health_check():
             "error": str(e),
             "timestamp": time.time()
         }
+
+def get_extension_from_url_or_header(url, response):
+    content_type = response.headers.get('Content-Type', '')
+    if 'pdf' in content_type:
+        return '.pdf'
+    elif 'text' in content_type or 'plain' in content_type:
+        return '.txt'
+    # Fallback: guess from URL
+    ext = os.path.splitext(url)[1]
+    if ext in ['.pdf', '.txt']:
+        return ext
+    return '.bin'  # fallback
 
 if __name__ == "__main__":
     import uvicorn
