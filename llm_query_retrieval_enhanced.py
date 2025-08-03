@@ -12,34 +12,55 @@ class SimpleDocument:
         self.page_content = page_content
         self.metadata = metadata or {}
 
-def extract_text_from_pdf(pdf_path: str) -> str:
-    """Extract text from PDF using pdfplumber, fallback to PyPDF2 if needed"""
-    # Try pdfplumber first
-    try:
-        text = ""
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
+def extract_text_from_file(file_path: str) -> str:
+    """
+    Extract text from a PDF or TXT file.
+    - For .pdf: uses pdfplumber, then PyPDF2 as fallback.
+    - For .txt: reads as UTF-8 text.
+    - For other types: raises ValueError.
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".pdf":
+        # Try pdfplumber first
+        try:
+            text = ""
+            with pdfplumber.open(file_path) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+            if text.strip():
+                return text.strip()
+        except Exception as e:
+            print(f"pdfplumber extraction failed: {str(e)}")
+        # Fallback to PyPDF2
+        try:
+            text = ""
+            reader = PdfReader(file_path)
+            for page in reader.pages:
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text + "\n"
-        if text.strip():
-            return text.strip()
-    except Exception as e:
-        print(f"pdfplumber extraction failed: {str(e)}")
-    # Fallback to PyPDF2
-    try:
-        text = ""
-        reader = PdfReader(pdf_path)
-        for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-        if text.strip():
-            return text.strip()
-    except Exception as e:
-        print(f"PyPDF2 extraction failed: {str(e)}")
-    # If both fail, return error message
-    return "The PDF document could not be read properly. This might be due to: (1) The file being corrupted or password-protected, (2) The file being an image-based PDF (scanned document), (3) The file being in an unsupported format. Please provide a text-based PDF or convert the document to text format."
+            if text.strip():
+                return text.strip()
+        except Exception as e:
+            print(f"PyPDF2 extraction failed: {str(e)}")
+        # If both fail, return error message
+        return (
+            "The PDF document could not be read properly. "
+            "This might be due to: (1) The file being corrupted or password-protected, "
+            "(2) The file being an image-based PDF (scanned document), "
+            "(3) The file being in an unsupported format. "
+            "Please provide a text-based PDF or convert the document to text format."
+        )
+    elif ext == ".txt":
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            return f"Error reading text file: {str(e)}"
+    else:
+        raise ValueError(f"Unsupported file type: {ext}")
 
 
 def load_and_process_document(file_path: str) -> list:
@@ -47,15 +68,7 @@ def load_and_process_document(file_path: str) -> list:
     Load and process document from file path
     """
     try:
-        file_ext = os.path.splitext(file_path)[1].lower()
-        if file_ext == '.pdf':
-            text_content = extract_text_from_pdf(file_path)
-        elif file_ext == '.txt':
-            with open(file_path, 'r', encoding='utf-8') as f:
-                text_content = f.read()
-        else:
-            raise ValueError(f"Unsupported file type: {file_ext}")
-        # Log the first 500 characters of extracted text
+        text_content = extract_text_from_file(file_path)
         print(f"[DEBUG] Extracted text (first 500 chars): {text_content[:500]}")
         document = SimpleDocument(text_content, {"source": file_path})
         return [document]
