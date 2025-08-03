@@ -8,17 +8,12 @@ from dotenv import load_dotenv
 import re
 import json
 import mimetypes
-import time
 from io import BytesIO
-import sys
+# Removed google.generativeai import - not needed for our implementation
+# Removed unnecessary imports - using simplified implementation
 
 # Load environment variables
 load_dotenv()
-
-# Add startup logging
-print("🚀 Starting HackRx API...")
-print(f"Python version: {sys.version}")
-print(f"Current working directory: {os.getcwd()}")
 
 # Check if required environment variables are set
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -35,6 +30,8 @@ if not GEMINI_API_KEY:
 if not HF_TOKEN:
     print("⚠️ Warning: HF_TOKEN not found in environment variables")
 
+# Removed genai configuration - using our own API calls
+
 # Determine which models are available (FREE alternatives only)
 AVAILABLE_MODELS = []
 if MISTRAL_API_KEY:
@@ -46,49 +43,118 @@ if HF_TOKEN:
 
 print(f"🚀 Available models: {AVAILABLE_MODELS}")
 
-# Test imports before creating the app
-print("🔧 Testing imports...")
-try:
-    # Import our enhanced vector database functions
-    from llm_query_retrieval_enhanced import (
-        load_and_process_document,
-        load_and_process_document_from_memory,
-        create_semantic_chunks,
-        create_vector_store,
-        search_documents,
-        answer_question,
-        retrieve_relevant_chunks,
-        is_confident,
-        SimpleDocument,
-        call_mistral_api,
-        call_gemini_api,
-        call_huggingface_api,
-        clean_response
-    )
-    print("✅ Successfully imported all functions from llm_query_retrieval_enhanced")
-except ImportError as e:
-    print(f"❌ Import error: {e}")
-    # Fallback imports
-    try:
-        from llm_query_retrieval_enhanced import (
-            load_and_process_document,
-            load_and_process_document_from_memory,
-            answer_question
-        )
-        print("⚠️ Using fallback imports")
-    except ImportError as e2:
-        print(f"❌ Critical import error: {e2}")
-        sys.exit(1)
+# Import our enhanced vector database functions
+from llm_query_retrieval_enhanced import (
+    load_and_process_document,
+    load_and_process_document_from_memory,
+    create_semantic_chunks,
+    create_vector_store,
+    search_documents,
+    answer_question,
+    retrieve_relevant_chunks,
+    is_confident
+)
 
-print("✅ All imports successful")
+# Query expansion dictionary for insurance terms
+INSURANCE_SYNONYMS = {
+    "maternity": ["pregnancy", "childbirth", "delivery", "baby", "birth", "maternal"],
+    "waiting period": ["exclusion period", "time limit", "coverage delay", "waiting time", "exclusion"],
+    "pre-existing": ["pre-existing disease", "existing condition", "prior condition", "chronic"],
+    "coverage": ["cover", "benefit", "protection", "insurance", "policy"],
+    "exclusion": ["excluded", "not covered", "limitation", "restriction"],
+    "premium": ["payment", "cost", "fee", "amount", "price"],
+    "claim": ["claiming", "reimbursement", "payment", "benefit"],
+    "hospital": ["hospitalization", "medical facility", "clinic", "healthcare center"],
+    "surgery": ["operation", "procedure", "surgical", "medical procedure"],
+    "medication": ["medicine", "drug", "prescription", "treatment"],
+    "diagnosis": ["diagnostic", "test", "examination", "medical test"],
+    "treatment": ["therapy", "care", "medical care", "healthcare"],
+    "policy": ["insurance policy", "plan", "coverage", "contract"],
+    "renewal": ["renew", "continue", "extend", "maintain"],
+    "grace period": ["grace", "extension", "additional time", "late payment"]
+}
 
-# Create FastAPI app
-app = FastAPI(title="HackRx Insurance Bot", version="1.0.0")
-security = HTTPBearer()
-AUTH_TOKEN = "02b1ad646a69f58d41c75bb9ea5f78bbaf30389258623d713ff4115b554377f0"
+def expand_query(query):
+    """Expand query with insurance-related synonyms"""
+    expanded_terms = []
+    query_lower = query.lower()
+    
+    # Add original query
+    expanded_terms.append(query)
+    
+    # Add synonyms for matched terms
+    for term, synonyms in INSURANCE_SYNONYMS.items():
+        if term in query_lower:
+            for synonym in synonyms:
+                expanded_query = query_lower.replace(term, synonym)
+                if expanded_query != query_lower:
+                    expanded_terms.append(expanded_query)
+    
+    # Add key terms from the query
+    key_words = re.findall(r'\b\w+\b', query_lower)
+    for word in key_words:
+        if word in INSURANCE_SYNONYMS:
+            for synonym in INSURANCE_SYNONYMS[word]:
+                expanded_terms.append(synonym)
+    
+    # Remove duplicates and return unique queries
+    unique_queries = list(set(expanded_terms))
+    print(f"🔍 Expanded query '{query}' to {len(unique_queries)} variations")
+    return unique_queries
 
-# Simple request/response models (no Pydantic)
-# We'll handle validation manually
+def keyword_search(query, vectorstore, top_k=5):
+    """Keyword-based search using exact word matching"""
+    query_words = re.findall(r'\b\w+\b', query.lower())
+    all_chunks = []
+    
+    # Search through document list
+    for doc in vectorstore:
+        doc_content = doc.page_content.lower()
+        score = 0
+        
+        # Count exact word matches
+        for word in query_words:
+            if word in doc_content:
+                score += 1
+        
+        # Normalize score by query length
+        if len(query_words) > 0:
+            score = score / len(query_words)
+        
+        if score > 0:
+            all_chunks.append((doc, score))
+    
+    # Sort by score and return top_k
+    all_chunks.sort(key=lambda x: x[1], reverse=True)
+    return all_chunks[:top_k]
+
+def hybrid_search(query, vectorstore, top_k=5):
+    """Combine different search strategies"""
+    # Get keyword results from retrieve_relevant_chunks
+    semantic_results = retrieve_relevant_chunks(query, vectorstore, top_k=top_k)
+    
+    # Get additional keyword results
+    keyword_results = keyword_search(query, vectorstore, top_k=top_k)
+    
+    # Combine and deduplicate
+    combined = {}
+    
+    # Add semantic results
+    for doc, score in semantic_results:
+        combined[doc.page_content] = (doc, 1.0 - score)  # Convert to similarity score
+    
+    # Add keyword results
+    for doc, score in keyword_results:
+        if doc.page_content in combined:
+            # Average the scores
+            existing_score = combined[doc.page_content][1]
+            combined[doc.page_content] = (doc, (existing_score + score) / 2)
+        else:
+            combined[doc.page_content] = (doc, score)
+    
+    # Sort by combined score and return top_k
+    sorted_results = sorted(combined.values(), key=lambda x: x[1], reverse=True)
+    return sorted_results[:top_k]
 
 def generate_fallback_answer(question, context):
     """Generate a simple answer from context without using external APIs"""
@@ -119,10 +185,39 @@ def generate_fallback_answer(question, context):
         # If no specific terms found, return a general response
         return f"Based on the policy document, I found information that may be relevant to your question about {question}. Please review the document for specific details."
 
+def get_extension_from_url_or_header(url, response):
+    content_type = response.headers.get('Content-Type', '')
+    if 'pdf' in content_type:
+        return '.pdf'
+    elif 'text' in content_type or 'plain' in content_type:
+        return '.txt'
+    # Fallback: guess from URL
+    ext = os.path.splitext(url)[1]
+    if ext in ['.pdf', '.txt']:
+        return ext
+    return '.bin'  # fallback
+
+# Initialize FastAPI app
+app = FastAPI(title="HackRx Document Q&A API", version="1.0.0")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize app on startup"""
+    print("🚀 Starting HackRx Document Q&A API...")
+    print(f"📊 Available models: {AVAILABLE_MODELS}")
+    print("✅ API is ready to serve requests!")
+
+# Security
+security = HTTPBearer()
+AUTH_TOKEN = "02b1ad646a69f58d41c75bb9ea5f78bbaf30389258623d713ff4115b554377f0"
+
+# Simple request/response models (no Pydantic)
+# We'll handle validation manually
+
+# Authentication dependency
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verify the authentication token"""
     if credentials.credentials != AUTH_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
     return credentials.credentials
 
 # 🔧 NEW: Confidence scoring function
@@ -149,36 +244,28 @@ Question: {query}
 
 Provide a direct answer with specific details from the policy:"""
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize app on startup"""
-    print("🚀 Starting HackRx Document Q&A API...")
-    print(f"📊 Available models: {AVAILABLE_MODELS}")
-    print("✅ API is ready to serve requests!")
-
 @app.get("/")
 async def root():
-    """Root endpoint"""
     return {
-        "message": "HackRx Insurance Bot API",
+        "message": "HackRx Document Q&A API is running!",
+        "status": "healthy",
         "version": "1.0.0",
-        "status": "running",
-        "available_models": AVAILABLE_MODELS
+        "available_models": AVAILABLE_MODELS,
+        "note": "Simplified version - document processing limited to text files"
     }
 
 @app.get("/test")
 async def test_endpoint():
-    """Simple test endpoint"""
+    """Simple test endpoint that doesn't require document processing"""
     return {
-        "message": "Test endpoint working!",
-        "timestamp": time.time(),
-        "python_version": sys.version,
-        "working_directory": os.getcwd()
+        "message": "API is working!",
+        "test": "success",
+        "available_models": AVAILABLE_MODELS
     }
 
 @app.post("/test-post")
 async def test_post_endpoint(request: Request):
-    """Test POST endpoint"""
+    """Test POST endpoint to check JSON parsing"""
     try:
         body = await request.json()
         return {
@@ -204,14 +291,10 @@ async def hackrx_run(
     Process document and answer questions using AI responses
     """
     try:
-        print("🚀 Starting hackrx_run endpoint...")
-        
         # Parse JSON request manually
         try:
             body = await request.json()
-            print("✅ JSON parsed successfully")
         except Exception as e:
-            print(f"❌ JSON parsing error: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
         
         documents_url = body.get("documents")
@@ -231,161 +314,136 @@ async def hackrx_run(
         try:
             response = requests.get(documents_url, timeout=30)
             response.raise_for_status()
-            print("✅ Document downloaded successfully")
         except requests.exceptions.Timeout:
             raise HTTPException(status_code=408, detail="Document download timed out. Please try again.")
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
         
         # Step 2: Process document in memory using BytesIO
+        # Create BytesIO object from response content
         pdf_bytes = BytesIO(response.content)
         
         # Step 3: Load and process document directly from memory
         print("📄 Loading and processing document...")
         try:
+            # Pass the BytesIO object to a new in-memory processing function
+            print("[DEBUG] Calling load_and_process_document_from_memory...")
             documents = load_and_process_document_from_memory(pdf_bytes, get_extension_from_url_or_header(documents_url, response))
-            if not documents:
-                raise HTTPException(status_code=500, detail="Failed to process document - no content extracted")
-            print(f"✅ Processed {len(documents)} documents")
+            print(f"[DEBUG] load_and_process_document_from_memory returned {len(documents)} documents")
         except Exception as e:
-            print(f"❌ Document processing error: {e}")
+            print(f"[ERROR] Failed to process document: {str(e)}")
+            print(f"[ERROR] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
         
         # Step 4: Create semantic chunks
         print("🔪 Creating semantic chunks...")
         try:
-            chunks = create_semantic_chunks(documents, chunk_size=500, chunk_overlap=100)
-            if not chunks:
-                raise HTTPException(status_code=500, detail="Failed to create chunks")
-            print(f"✅ Created {len(chunks)} chunks")
+            # Use smaller chunks for memory optimization on free tier
+            print("[DEBUG] Calling create_semantic_chunks...")
+            chunks = create_semantic_chunks(documents, chunk_size=800, chunk_overlap=150)
+            print(f"[DEBUG] create_semantic_chunks returned {len(chunks)} chunks")
         except Exception as e:
-            print(f"❌ Chunk creation error: {e}")
+            print(f"[ERROR] Failed to create chunks: {str(e)}")
+            print(f"[ERROR] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Failed to create chunks: {str(e)}")
         
         # Step 5: Generate document store
         print("🤖 Creating document store...")
         try:
+            print("[DEBUG] Calling create_vector_store...")
             vectorstore = create_vector_store(chunks)
-            if not vectorstore:
-                raise HTTPException(status_code=500, detail="Failed to create vector store")
-            print(f"✅ Created vector store with {len(vectorstore)} items")
+            print(f"[DEBUG] create_vector_store returned vectorstore with {len(vectorstore)} items")
         except Exception as e:
-            print(f"❌ Vector store creation error: {e}")
+            print(f"[ERROR] Failed to create document store: {str(e)}")
+            print(f"[ERROR] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Failed to create document store: {str(e)}")
         
         # Step 6: Process each question with real AI responses
         answers = []
-        for i, question in enumerate(questions):
+        for i, question in enumerate(questions, 1):
+            print(f"\n---\n🔍 Query {i}: {question}")
+            print(f"🔍 Processing question {i}: {question}")
+            
+            # 🔧 NEW: Query expansion
+            expanded_queries = expand_query(question)
+            
+            # 🔧 NEW: Multi-strategy search
+            all_chunks = []
+            
+            # Strategy 1: Original semantic search
+            print("🔍 Strategy 1: Semantic search")
+            semantic_chunks = retrieve_relevant_chunks(question, vectorstore, top_k=5)
+            all_chunks.extend(semantic_chunks)
+            
+            # Strategy 2: Hybrid search (simplified version)
+            print("🔍 Strategy 2: Hybrid search")
+            hybrid_chunks = hybrid_search(question, vectorstore, top_k=5)
+            all_chunks.extend(hybrid_chunks)
+            
+            # Strategy 3: Expanded query search
+            print("🔍 Strategy 3: Expanded query search")
+            for expanded_query in expanded_queries[:5]:  # Use top 5 expanded queries
+                expanded_chunks = retrieve_relevant_chunks(expanded_query, vectorstore, top_k=3)
+                all_chunks.extend(expanded_chunks)
+            
+            # Deduplicate and get top chunks
+            unique_chunks = {}
+            for doc, score in all_chunks:
+                if doc.page_content not in unique_chunks:
+                    unique_chunks[doc.page_content] = (doc, score)
+            
+            # Sort by score and get top 8 (increased from 5)
+            sorted_chunks = sorted(unique_chunks.values(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0)
+            top_chunks = sorted_chunks[:8]
+            
+            # Print search scores for debugging
+            print("Top search scores:", [round(c[1], 4) for c in top_chunks])
+            best_score = top_chunks[0][1] if top_chunks else None
+            print(f"Best search score: {best_score}")
+            
+            #  IMPROVED: Use real AI to generate answer with fallback handling
+            context = "\n\n".join([c[0].page_content for c in top_chunks])
+            print(f"Context passed to LLM (first 500 chars):\n{context[:500]}\n---")
+            prompt = build_insurance_prompt(context, question)
+            
+            # 🔧 NEW: Check confidence and generate answer with improved fallback
             try:
-                print(f"🤔 Processing question {i+1}/{len(questions)}: {question[:50]}...")
-                
-                # Get relevant chunks
-                try:
-                    top_chunks = retrieve_relevant_chunks(question, vectorstore, top_k=3)
-                    if not top_chunks:
-                        print(f"⚠️ No relevant chunks found for question {i+1}")
-                        answers.append("I couldn't find relevant information in the document to answer this question.")
-                        continue
-                except Exception as e:
-                    print(f"❌ Chunk retrieval error for question {i+1}: {e}")
-                    answers.append("Error retrieving relevant information from the document.")
-                    continue
-                
-                # Convert chunks to the format expected by answer_question
-                chunk_dicts = [{"chunk": chunk[0].page_content} for chunk in top_chunks]
-                
-                # Generate answer
-                try:
-                    answer = answer_question(question, chunk_dicts, method="auto")
-                    if answer.startswith("Error:"):
-                        print(f"⚠️ AI error for question {i+1}: {answer}")
-                        # Try fallback
-                        context = "\n\n".join([chunk[0].page_content for chunk in top_chunks])
-                        answer = generate_fallback_answer(question, context)
-                    
-                    answers.append(answer)
-                    print(f"✅ Answered question {i+1}")
-                    
-                except Exception as e:
-                    print(f"❌ Answer generation error for question {i+1}: {e}")
-                    # Use fallback answer
-                    context = "\n\n".join([chunk[0].page_content for chunk in top_chunks])
-                    answer = generate_fallback_answer(question, context)
-                    answers.append(answer)
-                
+                # Convert tuples to expected dictionary format
+                formatted_chunks = [{'chunk': c[0].page_content} for c in top_chunks]
+                print(f"🔧 Calling Mistral with {len(formatted_chunks)} chunks")
+                answer = answer_question(
+                    question,
+                    top_chunks=formatted_chunks,
+                    method="auto",  # This will try Mistral first, then Gemini, then HuggingFace, then fallback
+                    custom_prompt=prompt
+                )
+                print("LLM answer:", answer)
             except Exception as e:
-                print(f"❌ Question processing error {i+1}: {e}")
-                answers.append("An error occurred while processing this question.")
+                print(f"❌ All AI APIs failed: {str(e)}")
+                # Generate fallback answer from context
+                context = "\n\n".join([c[0].page_content for c in top_chunks])
+                answer = generate_fallback_answer(question, context)
+                print("Fallback answer:", answer)
+            
+            answers.append(answer.strip())
+            print(f"✅ Final answer for query {i}: {answer.strip()}")
         
-        # Step 7: Return results
-        print("✅ Successfully processed all questions")
-        return {
-            "answers": answers,
-            "status": "success",
-            "questions_processed": len(questions),
-            "chunks_created": len(chunks)
-        }
+        print(f"🎉 Successfully processed {len(answers)} questions")
+        return {"answers": answers}
         
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
     except Exception as e:
-        print(f"❌ Unexpected error in hackrx_run: {e}")
-        import traceback
-        print(f"❌ Full traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 @app.get("/health")
 async def health_check():
-    """Comprehensive health check endpoint"""
-    try:
-        # Check environment variables
-        env_status = {
-            "MISTRAL_API_KEY": "✅" if MISTRAL_API_KEY else "❌",
-            "GEMINI_API_KEY": "✅" if GEMINI_API_KEY else "❌", 
-            "HF_TOKEN": "✅" if HF_TOKEN else "❌"
-        }
-        
-        # Check available models
-        model_status = {
-            "mistral": "✅" if MISTRAL_API_KEY else "❌",
-            "gemini": "✅" if GEMINI_API_KEY else "❌",
-            "huggingface": "✅" if HF_TOKEN else "❌"
-        }
-        
-        # Test basic imports
-        import_status = "✅"
-        try:
-            from llm_query_retrieval_enhanced import answer_question
-        except Exception as e:
-            import_status = f"❌ {str(e)}"
-        
-        return {
-            "status": "healthy",
-            "timestamp": time.time(),
-            "environment_variables": env_status,
-            "available_models": model_status,
-            "imports": import_status,
-            "available_models_count": len(AVAILABLE_MODELS)
-        }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": time.time()
-        }
-
-def get_extension_from_url_or_header(url, response):
-    content_type = response.headers.get('Content-Type', '')
-    if 'pdf' in content_type:
-        return '.pdf'
-    elif 'text' in content_type or 'plain' in content_type:
-        return '.txt'
-    # Fallback: guess from URL
-    ext = os.path.splitext(url)[1]
-    if ext in ['.pdf', '.txt']:
-        return ext
-    return '.bin'  # fallback
+    """Health check endpoint"""
+    return {"status": "healthy", "message": "HackRx API is running"}
 
 if __name__ == "__main__":
     import uvicorn
