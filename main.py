@@ -471,6 +471,46 @@ async def hackrx_simple(
         print(f"❌ Error in hackrx_simple: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
+@app.post("/hackrx/fixed")
+async def hackrx_fixed(
+    request: Request,
+    token: str = Depends(verify_token)
+):
+    """
+    Fixed version of the main hackrx endpoint
+    """
+    try:
+        # Parse JSON request manually
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+        
+        documents_url = body.get("documents")
+        questions = body.get("questions", [])
+        
+        if not documents_url:
+            raise HTTPException(status_code=400, detail="Missing 'documents' field")
+        if not questions:
+            raise HTTPException(status_code=400, detail="Missing 'questions' field")
+        if not isinstance(questions, list):
+            raise HTTPException(status_code=400, detail="'questions' must be a list")
+        
+        print(f"🚀 Fixed request with {len(questions)} questions")
+        print(f"📥 Document URL: {documents_url}")
+        
+        # For now, return a simple response to test the endpoint
+        return {
+            "message": "Fixed endpoint working!",
+            "documents_url": documents_url,
+            "questions": questions,
+            "answers": [f"Fixed test answer for: {q}" for q in questions]
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in hackrx_fixed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
