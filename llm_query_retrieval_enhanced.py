@@ -11,7 +11,29 @@ class SimpleDocument:
         self.metadata = metadata or {}
 
 def extract_text_from_pdf(pdf_path: str) -> str:
-    """Extract text from PDF using multiple strategies"""
+    """Extract text from PDF using enhanced PyTorch-based extraction"""
+    try:
+        # Import the enhanced extractor
+        from enhanced_pdf_extractor import pdf_extractor
+        
+        # Extract text using multiple strategies
+        extracted_text = pdf_extractor.extract_text(pdf_path)
+        
+        # Clean the extracted text
+        cleaned_text = pdf_extractor.clean_extracted_text(extracted_text)
+        
+        return cleaned_text
+        
+    except ImportError:
+        # Fallback to basic extraction if enhanced extractor is not available
+        print("Enhanced PDF extractor not available, using basic extraction")
+        return _basic_extract_text_from_pdf(pdf_path)
+    except Exception as e:
+        print(f"Enhanced PDF extraction failed: {str(e)}")
+        return _basic_extract_text_from_pdf(pdf_path)
+
+def _basic_extract_text_from_pdf(pdf_path: str) -> str:
+    """Basic text extraction as fallback"""
     try:
         # Strategy 1: Try to read as text first (in case it's actually a text file)
         with open(pdf_path, 'r', encoding='utf-8') as f:
@@ -36,10 +58,10 @@ def extract_text_from_pdf(pdf_path: str) -> str:
             for line in lines:
                 # Remove binary artifacts and keep readable text
                 clean_line = re.sub(r'[^\x20-\x7E\n\r\t]', '', line)
-                if len(clean_line.strip()) > 10:  # Only keep substantial lines
+                if len(clean_line.strip()) > 5:  # Less restrictive
                     text_content += clean_line + '\n'
             
-            if len(text_content.strip()) > 200:  # If we got substantial text
+            if len(text_content.strip()) > 100:  # If we got substantial text
                 return text_content.strip()
         except:
             pass
@@ -98,7 +120,7 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         printable_pattern = re.findall(r'[A-Za-z0-9\s\.\,\;\:\!\?\-\(\)]+', content_str)
         if printable_pattern:
             # Filter out very short patterns and join
-            meaningful_patterns = [p.strip() for p in printable_pattern if len(p.strip()) > 10]
+            meaningful_patterns = [p.strip() for p in printable_pattern if len(p.strip()) > 5]
             if meaningful_patterns:
                 return " ".join(meaningful_patterns[:20])  # Return first 20 patterns
         

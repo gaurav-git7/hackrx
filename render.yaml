@@ -1,14 +1,23 @@
 services:
   - type: web
-    name: hackrx-api
+    name: bajaj-insurance-qa
     env: python
-    plan: free
-    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.7
+        value: 3.9.16
       - key: GEMINI_API_KEY
         sync: false
       - key: HF_TOKEN
-        sync: false 
+        sync: false
+    buildFilter:
+      paths:
+        - requirements.txt
+        - main.py
+        - llm_query_retrieval_enhanced.py
+        - enhanced_pdf_extractor.py
+        - start.sh
+    healthCheckPath: /health
+    autoDeploy: true
+    plan: free 
