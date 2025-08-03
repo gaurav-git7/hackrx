@@ -47,9 +47,8 @@ try:
         retrieve_relevant_chunks,
         is_confident
     )
-    print("✅ Enhanced PDF extraction modules imported successfully")
 except ImportError as e:
-    print(f"⚠️ Warning: Some enhanced PDF extraction modules failed to import: {e}")
+    print(f"⚠️ Warning: Enhanced PDF extraction modules failed to import: {e}")
     # Define fallback functions
     def load_and_process_document(file_path):
         return []
@@ -201,29 +200,10 @@ app = FastAPI(title="HackRx Document Q&A API", version="1.0.0")
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize app on startup"""
-    try:
-        print("🚀 Starting HackRx Document Q&A API...")
-        print(f"📊 Available models: {AVAILABLE_MODELS}")
-        
-        # Test basic imports
-        import requests
-        import fastapi
-        import uvicorn
-        print("✅ Core dependencies imported successfully")
-        
-        # Test PDF processing imports
-        try:
-            import PyPDF2
-            import pdfplumber
-            print("✅ PDF processing dependencies available")
-        except ImportError as e:
-            print(f"⚠️ PDF processing dependencies not available: {e}")
-        
-        print("✅ API is ready to serve requests!")
-    except Exception as e:
-        print(f"❌ Startup failed: {e}")
-        # Don't raise the exception - let the app start anyway
+    """Initialize app on startup - optimized for speed"""
+    print("🚀 Starting HackRx Document Q&A API...")
+    print(f"📊 Available models: {AVAILABLE_MODELS}")
+    print("✅ API is ready to serve requests!")
 
 # Security
 security = HTTPBearer()
