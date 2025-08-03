@@ -41,6 +41,7 @@ print(f"🚀 Available FREE models: {AVAILABLE_MODELS}")
 # Import our enhanced vector database functions
 from llm_query_retrieval_enhanced import (
     load_and_process_document,
+    load_and_process_document_from_memory,
     create_semantic_chunks,
     create_vector_store,
     search_documents,
