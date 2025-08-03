@@ -5,6 +5,8 @@ from typing import List, Dict, Any, Tuple, Optional
 import re
 import pdfplumber
 from PyPDF2 import PdfReader
+import time
+import random
 
 # Simple document class for our simplified version
 class SimpleDocument:
@@ -150,65 +152,75 @@ def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_
     print("🔍 Using keyword-based search")
     return search_documents(query, vectorstore, top_k)
 
-def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str = "gemini", custom_prompt: str = None) -> str:
+def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str = "auto", custom_prompt: str = None) -> str:
     """
-    Answer question using AI models with improved fallback handling
+    Answer question using AI with improved fallback handling
     """
-    # Prepare context from chunks
+    if not top_chunks:
+        return "I couldn't find relevant information in the document to answer your question."
+    
+    # Build context from chunks
     context = "\n\n".join([chunk['chunk'] for chunk in top_chunks])
     
-    # Use custom prompt if provided, otherwise use default
+    # Use custom prompt if provided, otherwise build default
     if custom_prompt:
         prompt = custom_prompt
     else:
-        prompt = f"""
-        Based on the following context, answer the question. If the context doesn't contain enough information, say so clearly.
-        
-        Context:
-        {context}
-        
-        Question: {question}
-        
-        Answer:
-        """
+        prompt = f"""Based on the following insurance policy document, please answer the question. If the information is not available in the document, say so clearly.
+
+Document: {context}
+
+Question: {question}
+
+Answer:"""
     
-    # Try Gemini first
-    if method == "gemini" or method == "auto":
+    # Try different methods based on availability and rate limits
+    if method == "auto":
+        # Try Gemini first, then HuggingFace, then fallback
         try:
-            return call_gemini_api(prompt)
+            result = call_gemini_api(prompt)
+            if not result.startswith("Error:"):
+                return result
         except Exception as e:
-            print(f"❌ Gemini failed: {str(e)}")
-            if method == "auto":
-                # Fallback to HuggingFace
-                try:
-                    return call_huggingface_api(prompt)
-                except Exception as e2:
-                    print(f"❌ HuggingFace also failed: {str(e2)}")
-                    return generate_fallback_answer(question, context)
-            else:
-                raise e
+            print(f"Gemini failed: {e}")
+        
+        # Fallback to HuggingFace
+        try:
+            result = call_huggingface_api(prompt)
+            if not result.startswith("Error:"):
+                return result
+        except Exception as e:
+            print(f"HuggingFace failed: {e}")
+        
+        # Final fallback
+        return generate_fallback_answer(question, context)
     
-    # Try HuggingFace
+    elif method == "gemini":
+        result = call_gemini_api(prompt)
+        if result.startswith("Error:"):
+            # If Gemini fails, try HuggingFace as backup
+            backup_result = call_huggingface_api(prompt)
+            if not backup_result.startswith("Error:"):
+                return backup_result
+        return result
+    
     elif method == "huggingface":
-        try:
-            return call_huggingface_api(prompt)
-        except Exception as e:
-            print(f"❌ HuggingFace failed: {str(e)}")
-            return generate_fallback_answer(question, context)
+        result = call_huggingface_api(prompt)
+        if result.startswith("Error:"):
+            # If HuggingFace fails, try Gemini as backup
+            backup_result = call_gemini_api(prompt)
+            if not backup_result.startswith("Error:"):
+                return backup_result
+        return result
     
     else:
         return generate_fallback_answer(question, context)
 
 def call_gemini_api(prompt: str) -> str:
-    """
-    Call Gemini API with improved error handling
-    """
-    import os
-    import requests
-    
+    """Call Gemini API with rate limiting and retry logic"""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        raise Exception("GEMINI_API_KEY not found in environment variables")
+        return "Error: GEMINI_API_KEY not found in environment variables"
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
@@ -218,29 +230,42 @@ def call_gemini_api(prompt: str) -> str:
         }],
         "generationConfig": {
             "temperature": 0.3,
-            "topK": 40,
-            "topP": 0.95,
-            "maxOutputTokens": 1024,
+            "maxOutputTokens": 1000,
         }
     }
     
-    try:
-        response = requests.post(url, json=data, timeout=30)
-        response.raise_for_status()
-        
-        result = response.json()
-        if "candidates" in result and len(result["candidates"]) > 0:
-            return result["candidates"][0]["content"]["parts"][0]["text"]
-        else:
-            raise Exception("No response from Gemini API")
+    # Add random delay to avoid rate limits
+    time.sleep(random.uniform(1, 3))
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, json=data, timeout=30)
+            response.raise_for_status()
             
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 429:
-            raise Exception(f"Rate limit exceeded for Gemini API. Please wait a moment and try again.")
-        else:
-            raise Exception(f"Gemini API error: {e.response.status_code} - {e.response.text}")
-    except Exception as e:
-        raise Exception(f"Error communicating with Gemini API: {str(e)}")
+            result = response.json()
+            if "candidates" in result and len(result["candidates"]) > 0:
+                return result["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                return "Error: No response from Gemini API"
+                
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:  # Rate limit
+                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
+                time.sleep(wait_time)
+                if attempt == max_retries - 1:
+                    return "Error: Gemini API rate limit exceeded. Please try again later."
+            else:
+                return f"Error communicating with Gemini API: {e}"
+        except requests.exceptions.Timeout:
+            return "Error: Gemini API request timed out"
+        except requests.exceptions.RequestException as e:
+            return f"Error communicating with Gemini API: {e}"
+        except Exception as e:
+            return f"Unexpected error calling Gemini API: {str(e)}"
+    
+    return "Error: All retry attempts failed"
 
 def call_huggingface_api(prompt: str) -> str:
     """
