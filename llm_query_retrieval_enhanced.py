@@ -34,6 +34,17 @@ session.headers.update({
     'User-Agent': 'InsuranceBot/1.0'
 })
 
+# Simple document class for our simplified version
+class SimpleDocument:
+    def __init__(self, page_content: str, metadata: Dict[str, Any] = None):
+        self.page_content = page_content
+        self.metadata = metadata or {}
+        # Generate embedding for the document
+        if embedding_model:
+            self.embedding = embedding_model.encode(page_content)
+        else:
+            self.embedding = None
+
 # Simple cache for processed documents
 document_cache = {}
 
@@ -63,16 +74,6 @@ def save_cached_document(file_hash: str, documents: List[SimpleDocument]):
     except Exception as e:
         print(f"Failed to save cache: {e}")
 
-# Simple document class for our simplified version
-class SimpleDocument:
-    def __init__(self, page_content: str, metadata: Dict[str, Any] = None):
-        self.page_content = page_content
-        self.metadata = metadata or {}
-        # Generate embedding for the document
-        if embedding_model:
-            self.embedding = embedding_model.encode(page_content)
-        else:
-            self.embedding = None
 
 def extract_text_from_file(file_path: str) -> str:
     """
