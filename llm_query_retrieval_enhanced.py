@@ -55,6 +55,8 @@ def load_and_process_document(file_path: str) -> list:
                 text_content = f.read()
         else:
             raise ValueError(f"Unsupported file type: {file_ext}")
+        # Log the first 500 characters of extracted text
+        print(f"[DEBUG] Extracted text (first 500 chars): {text_content[:500]}")
         document = SimpleDocument(text_content, {"source": file_path})
         return [document]
     except Exception as e:
