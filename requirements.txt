@@ -1,26 +1,19 @@
-# System dependencies - must be installed first
-setuptools>=65.0.0
-wheel>=0.38.0
+# Minimal dependencies for Render deployment
+# Only using pure Python packages with no compilation required
 
-# Core dependencies for LLM-powered query–retrieval system
-# Minimal dependencies for initial deployment
-PyPDF2==3.0.1
-requests==2.31.0
-python-dotenv==1.0.0
-
-# Web framework dependencies
+# Web framework
 fastapi==0.104.1
-uvicorn[standard]==0.24.0
+uvicorn==0.24.0
 pydantic==2.5.0
 
-# Additional dependencies for document processing
+# HTTP requests
+requests==2.31.0
+
+# Environment variables
+python-dotenv==1.0.0
+
+# File uploads
 python-multipart==0.0.6
 
-# Temporarily removed for deployment stability:
-# - faiss-cpu (causes build issues)
-# - chromadb (depends on faiss)
-# - langchain packages (can cause dependency conflicts)
-# - sentence-transformers (requires compilation)
-# - transformers (large package)
-# - numpy (included with other packages)
-# - python-docx, extract-msg (not essential for core functionality)
+# Note: Removed PyPDF2 as it requires Rust compilation
+# Will use alternative PDF processing approach

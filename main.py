@@ -239,6 +239,16 @@ async def root():
         "message": "HackRx Document Q&A API is running!",
         "status": "healthy",
         "version": "1.0.0",
+        "available_models": AVAILABLE_MODELS,
+        "note": "Simplified version - document processing limited to text files"
+    }
+
+@app.get("/test")
+async def test_endpoint():
+    """Simple test endpoint that doesn't require document processing"""
+    return {
+        "message": "API is working!",
+        "test": "success",
         "available_models": AVAILABLE_MODELS
     }
 
@@ -253,29 +263,34 @@ async def hackrx_run(
     try:
         print(f"�� Processing request with {len(request.questions)} questions")
         
-        # Step 1: Download PDF from URL
-        print(f"📥 Downloading PDF from: {request.documents}")
+        # Step 1: Download document from URL
+        print(f"📥 Downloading document from: {request.documents}")
         try:
             response = requests.get(request.documents, timeout=30)
             response.raise_for_status()
         except requests.exceptions.Timeout:
-            raise HTTPException(status_code=408, detail="PDF download timed out. Please try again.")
+            raise HTTPException(status_code=408, detail="Document download timed out. Please try again.")
         except requests.exceptions.RequestException as e:
-            raise HTTPException(status_code=400, detail=f"Failed to download PDF: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
         
-        # Step 2: Save PDF to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            tmp_file.write(response.content)
-            pdf_path = tmp_file.name
+        # Step 2: Save document to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_file:
+            # Try to decode as text first
+            try:
+                content = response.content.decode('utf-8')
+                tmp_file.write(content.encode('utf-8'))
+            except UnicodeDecodeError:
+                # If it's binary (like PDF), save as binary
+                tmp_file.write(response.content)
+            doc_path = tmp_file.name
         
         try:
             # Step 3: Load and process document
             print("📄 Loading and processing document...")
             try:
-                # SUGGESTED: Try chunk_size=1200-2000, chunk_overlap=200-400 for insurance policies
-                documents = load_and_process_document(pdf_path)
+                documents = load_and_process_document(doc_path)
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
             
             # Step 4: Create semantic chunks
             print("🔪 Creating semantic chunks...")
@@ -379,11 +394,11 @@ async def hackrx_run(
             
         finally:
             # Clean up temporary file
-            if os.path.exists(pdf_path):
-                os.unlink(pdf_path)
+            if os.path.exists(doc_path):
+                os.unlink(doc_path)
                 
     except requests.RequestException as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download PDF: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
