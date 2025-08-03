@@ -84,50 +84,80 @@ def load_and_process_document_from_memory(file_bytes: BytesIO, file_extension: s
     Load and process document from BytesIO object in memory
     """
     try:
+        print(f"[DEBUG] Processing file with extension: {file_extension}")
+        print(f"[DEBUG] File bytes size: {len(file_bytes.getvalue())} bytes")
+        
         if file_extension == ".pdf":
+            print("[DEBUG] Processing as PDF...")
             # Process PDF directly from memory using pdfplumber
             try:
                 text = ""
+                print("[DEBUG] Opening with pdfplumber...")
                 with pdfplumber.open(file_bytes) as pdf:
-                    for page in pdf.pages:
+                    print(f"[DEBUG] PDF has {len(pdf.pages)} pages")
+                    for i, page in enumerate(pdf.pages):
+                        print(f"[DEBUG] Processing page {i+1}...")
                         page_text = page.extract_text()
                         if page_text:
                             text += page_text + "\n"
+                            print(f"[DEBUG] Page {i+1} extracted {len(page_text)} characters")
+                        else:
+                            print(f"[DEBUG] Page {i+1} extracted no text")
+                
                 if text.strip():
                     text_content = text.strip()
+                    print(f"[DEBUG] Successfully extracted {len(text_content)} characters with pdfplumber")
                 else:
+                    print("[DEBUG] pdfplumber extracted no text, trying PyPDF2...")
                     # Fallback to PyPDF2
                     file_bytes.seek(0)  # Reset to beginning
                     reader = PdfReader(file_bytes)
                     text = ""
-                    for page in reader.pages:
+                    for i, page in enumerate(reader.pages):
+                        print(f"[DEBUG] PyPDF2 processing page {i+1}...")
                         page_text = page.extract_text()
                         if page_text:
                             text += page_text + "\n"
+                            print(f"[DEBUG] PyPDF2 page {i+1} extracted {len(page_text)} characters")
+                        else:
+                            print(f"[DEBUG] PyPDF2 page {i+1} extracted no text")
                     text_content = text.strip() if text.strip() else "PDF could not be read properly"
+                    print(f"[DEBUG] PyPDF2 extracted {len(text_content)} characters")
             except Exception as e:
-                print(f"PDF extraction failed: {str(e)}")
+                print(f"[ERROR] PDF extraction failed: {str(e)}")
+                print(f"[ERROR] Exception type: {type(e).__name__}")
+                import traceback
+                print(f"[ERROR] Full traceback: {traceback.format_exc()}")
                 text_content = "PDF could not be read properly"
         elif file_extension == ".txt":
+            print("[DEBUG] Processing as text file...")
             # Read text from BytesIO
             file_bytes.seek(0)  # Reset to beginning
             try:
                 text_content = file_bytes.read().decode('utf-8')
-            except UnicodeDecodeError:
+                print(f"[DEBUG] Successfully decoded {len(text_content)} characters as UTF-8")
+            except UnicodeDecodeError as e:
+                print(f"[DEBUG] UTF-8 decode failed: {e}, trying latin-1...")
                 # Try other encodings
                 file_bytes.seek(0)
                 try:
                     text_content = file_bytes.read().decode('latin-1')
-                except:
+                    print(f"[DEBUG] Successfully decoded {len(text_content)} characters as latin-1")
+                except Exception as e2:
+                    print(f"[ERROR] All text decoding failed: {e2}")
                     text_content = "Text file could not be read properly"
         else:
             raise ValueError(f"Unsupported file type: {file_extension}")
         
-        print(f"[DEBUG] Extracted text (first 500 chars): {text_content[:500]}")
+        print(f"[DEBUG] Final extracted text (first 500 chars): {text_content[:500]}")
         document = SimpleDocument(text_content, {"source": "memory"})
+        print(f"[DEBUG] Created document with {len(text_content)} characters")
         return [document]
     except Exception as e:
-        print(f"Error loading document from memory: {str(e)}")
+        print(f"[ERROR] Error loading document from memory: {str(e)}")
+        print(f"[ERROR] Exception type: {type(e).__name__}")
+        import traceback
+        print(f"[ERROR] Full traceback: {traceback.format_exc()}")
         return []
 
 def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[SimpleDocument]:

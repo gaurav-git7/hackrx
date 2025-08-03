@@ -329,23 +329,41 @@ async def hackrx_run(
         print("📄 Loading and processing document...")
         try:
             # Pass the BytesIO object to a new in-memory processing function
+            print("[DEBUG] Calling load_and_process_document_from_memory...")
             documents = load_and_process_document_from_memory(pdf_bytes, get_extension_from_url_or_header(documents_url, response))
+            print(f"[DEBUG] load_and_process_document_from_memory returned {len(documents)} documents")
         except Exception as e:
+            print(f"[ERROR] Failed to process document: {str(e)}")
+            print(f"[ERROR] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
         
         # Step 4: Create semantic chunks
         print("🔪 Creating semantic chunks...")
         try:
             # Use smaller chunks for memory optimization on free tier
+            print("[DEBUG] Calling create_semantic_chunks...")
             chunks = create_semantic_chunks(documents, chunk_size=800, chunk_overlap=150)
+            print(f"[DEBUG] create_semantic_chunks returned {len(chunks)} chunks")
         except Exception as e:
+            print(f"[ERROR] Failed to create chunks: {str(e)}")
+            print(f"[ERROR] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Failed to create chunks: {str(e)}")
         
         # Step 5: Generate document store
         print("🤖 Creating document store...")
         try:
+            print("[DEBUG] Calling create_vector_store...")
             vectorstore = create_vector_store(chunks)
+            print(f"[DEBUG] create_vector_store returned vectorstore with {len(vectorstore)} items")
         except Exception as e:
+            print(f"[ERROR] Failed to create document store: {str(e)}")
+            print(f"[ERROR] Exception type: {type(e).__name__}")
+            import traceback
+            print(f"[ERROR] Full traceback: {traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=f"Failed to create document store: {str(e)}")
         
         # Step 6: Process each question with real AI responses
