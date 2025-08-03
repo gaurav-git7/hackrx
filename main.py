@@ -36,34 +36,16 @@ if HF_TOKEN:
 
 print(f"🚀 Available FREE models: {AVAILABLE_MODELS}")
 
-# Import our enhanced vector database functions with error handling
-try:
-    from llm_query_retrieval_enhanced import (
-        load_and_process_document,
-        create_semantic_chunks,
-        create_vector_store,
-        search_documents,
-        answer_question,
-        retrieve_relevant_chunks,
-        is_confident
-    )
-except ImportError as e:
-    print(f"⚠️ Warning: Enhanced PDF extraction modules failed to import: {e}")
-    # Define fallback functions
-    def load_and_process_document(file_path):
-        return []
-    def create_semantic_chunks(documents):
-        return []
-    def create_vector_store(chunks):
-        return []
-    def search_documents(query, vectorstore, top_k=5):
-        return []
-    def answer_question(question, top_chunks, method="auto"):
-        return "PDF processing not available"
-    def retrieve_relevant_chunks(query, vectorstore, top_k=5):
-        return []
-    def is_confident(top_chunks, threshold=0.7):
-        return False
+# Import our enhanced vector database functions
+from llm_query_retrieval_enhanced import (
+    load_and_process_document,
+    create_semantic_chunks,
+    create_vector_store,
+    search_documents,
+    answer_question,
+    retrieve_relevant_chunks,
+    is_confident
+)
 
 # Query expansion dictionary for insurance terms
 INSURANCE_SYNONYMS = {
@@ -200,7 +182,7 @@ app = FastAPI(title="HackRx Document Q&A API", version="1.0.0")
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize app on startup - optimized for speed"""
+    """Initialize app on startup"""
     print("🚀 Starting HackRx Document Q&A API...")
     print(f"📊 Available models: {AVAILABLE_MODELS}")
     print("✅ API is ready to serve requests!")
