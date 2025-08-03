@@ -111,7 +111,7 @@ class EnhancedPDFExtractor:
     
     def _extract_with_ocr(self, pdf_path: str) -> str:
         """Extract text using OCR (for scanned/image-based PDFs) - DISABLED"""
-        logger.warning("OCR extraction disabled for deployment stability")
+        logger.warning("OCR extraction disabled for deployment stability - PIL/Pillow removed")
         return ""
     
     def _extract_with_basic_text(self, pdf_path: str) -> str:
@@ -201,8 +201,8 @@ class EnhancedPDFExtractor:
         # Remove common PDF artifacts
         text = re.sub(r'[^\x20-\x7E\n\r\t]', '', text)
         
-        # Fix common OCR issues
-        text = text.replace('|', 'I')  # Common OCR mistake
+        # Fix common text issues
+        text = text.replace('|', 'I')  # Common text mistake
         text = text.replace('0', 'O')  # In context where it makes sense
         
         # Remove page numbers and headers/footers
