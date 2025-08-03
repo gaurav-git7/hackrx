@@ -226,9 +226,9 @@ def load_and_process_document_from_memory(file_bytes: BytesIO, file_extension: s
         return []
 
 
-def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 800, chunk_overlap: int = 150) -> List[SimpleDocument]:
+def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1200, chunk_overlap: int = 150) -> List[SimpleDocument]:
     """
-    Create semantic chunks from documents with optimized size for faster processing
+    Create semantic chunks from documents with optimized size for better answer quality
     """
     chunks = []
     for doc in documents:
@@ -264,9 +264,9 @@ def load_vector_store(file_path: str):
     return []
 
 
-def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
+def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
     """
-    Optimized search documents using semantic similarity with reduced results for speed
+    Optimized search documents using semantic similarity with increased results for quality
     """
     if not embedding_model:
         # Fallback to keyword search
@@ -291,9 +291,9 @@ def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int =
         return keyword_search(query, vectorstore, top_k)
 
 
-def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
+def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
     """
-    Optimized keyword-based search with reduced results for speed
+    Optimized keyword-based search with increased results for quality
     """
     query_words = set(query.lower().split())
     results = []
@@ -309,8 +309,8 @@ def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 3
     return results[:top_k]
 
 
-def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
-    """Retrieve relevant chunks using optimized search"""
+def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
+    """Retrieve relevant chunks using optimized search for quality"""
     return search_documents(query, vectorstore, top_k)
 
 
@@ -412,7 +412,7 @@ def call_gemini_api(prompt: str) -> str:
     for attempt in range(max_retries):
         try:
             response = session.post(url, json=data, timeout=15)  # Faster timeout
-            response.raise_for_status()
+    response.raise_for_status()
             
             result = response.json()
             if "candidates" in result and len(result["candidates"]) > 0:
@@ -469,7 +469,7 @@ def call_huggingface_api(prompt: str) -> str:
     for attempt in range(max_retries):
         try:
             response = session.post(url, headers=headers, json=data, timeout=15)  # Faster timeout
-            response.raise_for_status()
+    response.raise_for_status()
             
             result = response.json()
             if isinstance(result, list) and len(result) > 0:
@@ -477,7 +477,7 @@ def call_huggingface_api(prompt: str) -> str:
                 # Cache successful response
                 cache_response(prompt, "huggingface", answer)
                 return answer
-            else:
+    else:
                 return "Error: No response from HuggingFace API"
                 
         except requests.exceptions.HTTPError as e:
@@ -648,3 +648,7 @@ def create_document_index(file_path: str, index_path: str = "faiss_index"):
 def query_documents(question: str, vectorstore: List[SimpleDocument], top_k: int = 5):
     """Query documents (simplified - just for compatibility)"""
     return search_documents(question, vectorstore, top_k) 
+
+
+def build_insurance_prompt(context, query):
+    return f"""You are an insurance policy expert. Based on the following policy document, provide a detailed, policy-specific answer to the question. Reference specific sections or clauses if possible.\n\nPolicy Document:\n{context}\n\nQuestion: {query}\n\nAnswer (be detailed, cite policy sections if possible):""" 
