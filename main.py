@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 import re
 import json
+import mimetypes
 # Removed google.generativeai import - not needed for our implementation
 # Removed unnecessary imports - using simplified implementation
 
@@ -177,6 +178,18 @@ def generate_fallback_answer(question, context):
         # If no specific terms found, return a general response
         return f"Based on the policy document, I found information that may be relevant to your question about {question}. Please review the document for specific details."
 
+def get_extension_from_url_or_header(url, response):
+    content_type = response.headers.get('Content-Type', '')
+    if 'pdf' in content_type:
+        return '.pdf'
+    elif 'text' in content_type or 'plain' in content_type:
+        return '.txt'
+    # Fallback: guess from URL
+    ext = os.path.splitext(url)[1]
+    if ext in ['.pdf', '.txt']:
+        return ext
+    return '.bin'  # fallback
+
 # Initialize FastAPI app
 app = FastAPI(title="HackRx Document Q&A API", version="1.0.0")
 
@@ -307,15 +320,10 @@ async def hackrx_run(
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
         
-        # Step 2: Save document to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_file:
-            # Try to decode as text first
-            try:
-                content = response.content.decode('utf-8')
-                tmp_file.write(content.encode('utf-8'))
-            except UnicodeDecodeError:
-                # If it's binary (like PDF), save as binary
-                tmp_file.write(response.content)
+        # Step 2: Save document to temporary file with correct extension
+        ext = get_extension_from_url_or_header(documents_url, response)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
+            tmp_file.write(response.content)
             doc_path = tmp_file.name
         
         try:
