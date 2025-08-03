@@ -429,6 +429,41 @@ def call_huggingface_api(prompt: str) -> str:
     return "Error: All retry attempts failed"
 
 
+def clean_response(response: str) -> str:
+    """Clean and make the response more concise"""
+    # Remove common verbose phrases
+    verbose_phrases = [
+        "Based on the provided context",
+        "According to the policy document",
+        "The context provided",
+        "The policy states that",
+        "Based on the information provided",
+        "The document indicates that",
+        "As mentioned in the policy",
+        "The policy document shows that",
+        "According to the provided information",
+        "The context reveals that"
+    ]
+    
+    cleaned = response
+    for phrase in verbose_phrases:
+        cleaned = cleaned.replace(phrase, "")
+    
+    # Remove excessive newlines and spaces
+    cleaned = " ".join(cleaned.split())
+    
+    # Remove sentences that start with "To provide" or "For exact details"
+    lines = cleaned.split(". ")
+    filtered_lines = []
+    for line in lines:
+        if not any(line.startswith(phrase) for phrase in ["To provide", "For exact details", "For more information", "Please refer to", "You would need to"]):
+            filtered_lines.append(line)
+    
+    cleaned = ". ".join(filtered_lines)
+    
+    return cleaned.strip()
+
+
 def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str = "auto", custom_prompt: str = None) -> str:
     """
     Answer question using AI with improved fallback handling
@@ -443,13 +478,13 @@ def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str
     if custom_prompt:
         prompt = custom_prompt
     else:
-        prompt = f"""Based on the following insurance policy document, please answer the question. If the information is not available in the document, say so clearly.
+        prompt = f"""Based on the following insurance policy document, provide a direct and concise answer to the question. Focus only on the key facts and avoid verbose explanations.
 
 Document: {context}
 
 Question: {question}
 
-Answer:"""
+Answer (be direct and concise):"""
     
     # Try different methods based on availability and rate limits
     if method == "auto":
@@ -457,7 +492,7 @@ Answer:"""
         try:
             result = call_mistral_api(prompt)
             if not result.startswith("Error:"):
-                return result
+                return clean_response(result)
         except Exception as e:
             print(f"Mistral failed: {e}")
         
@@ -465,7 +500,7 @@ Answer:"""
         try:
             result = call_gemini_api(prompt)
             if not result.startswith("Error:"):
-                return result
+                return clean_response(result)
         except Exception as e:
             print(f"Gemini failed: {e}")
         
@@ -473,7 +508,7 @@ Answer:"""
         try:
             result = call_huggingface_api(prompt)
             if not result.startswith("Error:"):
-                return result
+                return clean_response(result)
         except Exception as e:
             print(f"HuggingFace failed: {e}")
         
@@ -486,8 +521,8 @@ Answer:"""
             # If Mistral fails, try Gemini as backup
             backup_result = call_gemini_api(prompt)
             if not backup_result.startswith("Error:"):
-                return backup_result
-        return result
+                return clean_response(backup_result)
+        return clean_response(result)
     
     elif method == "gemini":
         result = call_gemini_api(prompt)
@@ -495,8 +530,8 @@ Answer:"""
             # If Gemini fails, try Mistral as backup
             backup_result = call_mistral_api(prompt)
             if not backup_result.startswith("Error:"):
-                return backup_result
-        return result
+                return clean_response(backup_result)
+        return clean_response(result)
     
     elif method == "huggingface":
         result = call_huggingface_api(prompt)
@@ -504,8 +539,8 @@ Answer:"""
             # If HuggingFace fails, try Mistral as backup
             backup_result = call_mistral_api(prompt)
             if not backup_result.startswith("Error:"):
-                return backup_result
-        return result
+                return clean_response(backup_result)
+        return clean_response(result)
     
     else:
         return generate_fallback_answer(question, context)

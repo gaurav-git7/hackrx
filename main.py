@@ -234,23 +234,15 @@ def get_confidence_score(top_chunks):
     return confidence
 
 def build_insurance_prompt(context, query):
-    return f"""
-You are an expert insurance advisor. Answer the user's question using the information provided in the context below.
+    """Build a specific prompt for insurance policy questions"""
+    return f"""You are an insurance policy expert. Based on the following policy document, provide a direct and concise answer to the question. Focus only on the key facts and avoid verbose explanations.
 
-IMPORTANT: You MUST provide an answer. Do not say "insufficient information" or similar phrases.
-
-If you find exact information, provide it clearly.
-If you find related information, provide what you can find.
-If you find partial information, provide it and mention what's missing.
-If the context has any relevant information at all, use it to provide a helpful answer.
-
-Context:
+Policy Document:
 {context}
 
 Question: {query}
 
-Answer:
-"""
+Provide a direct answer with specific details from the policy:"""
 
 @app.get("/")
 async def root():
