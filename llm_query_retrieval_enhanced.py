@@ -9,14 +9,19 @@ import time
 import random
 from io import BytesIO
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
-# Initialize the embedding model
+# Try to import sentence-transformers, but make it optional
 try:
-    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-    print("✅ all-MiniLM-L6-v2 embedding model loaded successfully")
-except Exception as e:
-    print(f"❌ Failed to load embedding model: {e}")
+    from sentence_transformers import SentenceTransformer
+    # Initialize the embedding model
+    try:
+        embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        print("✅ all-MiniLM-L6-v2 embedding model loaded successfully")
+    except Exception as e:
+        print(f"❌ Failed to load embedding model: {e}")
+        embedding_model = None
+except ImportError:
+    print("⚠️ sentence-transformers not available, using keyword search only")
     embedding_model = None
 
 # Simple document class for our simplified version
