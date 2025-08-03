@@ -7,6 +7,7 @@ import pdfplumber
 from PyPDF2 import PdfReader
 import time
 import random
+from io import BytesIO
 
 # Simple document class for our simplified version
 class SimpleDocument:
@@ -76,6 +77,57 @@ def load_and_process_document(file_path: str) -> list:
         return [document]
     except Exception as e:
         print(f"Error loading document: {str(e)}")
+        return []
+
+def load_and_process_document_from_memory(file_bytes: BytesIO, file_extension: str) -> list:
+    """
+    Load and process document from BytesIO object in memory
+    """
+    try:
+        if file_extension == ".pdf":
+            # Process PDF directly from memory using pdfplumber
+            try:
+                text = ""
+                with pdfplumber.open(file_bytes) as pdf:
+                    for page in pdf.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                if text.strip():
+                    text_content = text.strip()
+                else:
+                    # Fallback to PyPDF2
+                    file_bytes.seek(0)  # Reset to beginning
+                    reader = PdfReader(file_bytes)
+                    text = ""
+                    for page in reader.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                    text_content = text.strip() if text.strip() else "PDF could not be read properly"
+            except Exception as e:
+                print(f"PDF extraction failed: {str(e)}")
+                text_content = "PDF could not be read properly"
+        elif file_extension == ".txt":
+            # Read text from BytesIO
+            file_bytes.seek(0)  # Reset to beginning
+            try:
+                text_content = file_bytes.read().decode('utf-8')
+            except UnicodeDecodeError:
+                # Try other encodings
+                file_bytes.seek(0)
+                try:
+                    text_content = file_bytes.read().decode('latin-1')
+                except:
+                    text_content = "Text file could not be read properly"
+        else:
+            raise ValueError(f"Unsupported file type: {file_extension}")
+        
+        print(f"[DEBUG] Extracted text (first 500 chars): {text_content[:500]}")
+        document = SimpleDocument(text_content, {"source": "memory"})
+        return [document]
+    except Exception as e:
+        print(f"Error loading document from memory: {str(e)}")
         return []
 
 def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[SimpleDocument]:

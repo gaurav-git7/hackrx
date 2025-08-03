@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import re
 import json
 import mimetypes
+from io import BytesIO
 # Removed google.generativeai import - not needed for our implementation
 # Removed unnecessary imports - using simplified implementation
 
@@ -320,115 +321,106 @@ async def hackrx_run(
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
         
-        # Step 2: Save document to temporary file with correct extension
-        ext = get_extension_from_url_or_header(documents_url, response)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
-            tmp_file.write(response.content)
-            doc_path = tmp_file.name
+        # Step 2: Process document in memory using BytesIO
+        # Create BytesIO object from response content
+        pdf_bytes = BytesIO(response.content)
         
+        # Step 3: Load and process document directly from memory
+        print("📄 Loading and processing document...")
         try:
-            # Step 3: Load and process document
-            print("📄 Loading and processing document...")
-            try:
-                documents = load_and_process_document(doc_path)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
+            # Pass the BytesIO object to a new in-memory processing function
+            documents = load_and_process_document_from_memory(pdf_bytes, get_extension_from_url_or_header(documents_url, response))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
+        
+        # Step 4: Create semantic chunks
+        print("🔪 Creating semantic chunks...")
+        try:
+            # Use smaller chunks for memory optimization on free tier
+            chunks = create_semantic_chunks(documents, chunk_size=800, chunk_overlap=150)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create chunks: {str(e)}")
+        
+        # Step 5: Generate document store
+        print("🤖 Creating document store...")
+        try:
+            vectorstore = create_vector_store(chunks)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create document store: {str(e)}")
+        
+        # Step 6: Process each question with real AI responses
+        answers = []
+        for i, question in enumerate(questions, 1):
+            print(f"\n---\n🔍 Query {i}: {question}")
+            print(f"🔍 Processing question {i}: {question}")
             
-            # Step 4: Create semantic chunks
-            print("🔪 Creating semantic chunks...")
-            try:
-                # Use smaller chunks for memory optimization on free tier
-                chunks = create_semantic_chunks(documents, chunk_size=800, chunk_overlap=150)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to create chunks: {str(e)}")
+            # 🔧 NEW: Query expansion
+            expanded_queries = expand_query(question)
             
-            # Step 5: Generate document store
-            print("🤖 Creating document store...")
-            try:
-                vectorstore = create_vector_store(chunks)
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to create document store: {str(e)}")
+            # 🔧 NEW: Multi-strategy search
+            all_chunks = []
             
-            # Step 6: Process each question with real AI responses
-            answers = []
-            for i, question in enumerate(questions, 1):
-                print(f"\n---\n🔍 Query {i}: {question}")
-                print(f"🔍 Processing question {i}: {question}")
-                
-                # 🔧 NEW: Query expansion
-                expanded_queries = expand_query(question)
-                
-                # 🔧 NEW: Multi-strategy search
-                all_chunks = []
-                
-                # Strategy 1: Original semantic search
-                print("🔍 Strategy 1: Semantic search")
-                semantic_chunks = retrieve_relevant_chunks(question, vectorstore, top_k=5)
-                all_chunks.extend(semantic_chunks)
-                
-                # Strategy 2: Hybrid search (simplified version)
-                print("🔍 Strategy 2: Hybrid search")
-                hybrid_chunks = hybrid_search(question, vectorstore, top_k=5)
-                all_chunks.extend(hybrid_chunks)
-                
-                # Strategy 3: Expanded query search
-                print("🔍 Strategy 3: Expanded query search")
-                for expanded_query in expanded_queries[:5]:  # Use top 5 expanded queries
-                    expanded_chunks = retrieve_relevant_chunks(expanded_query, vectorstore, top_k=3)
-                    all_chunks.extend(expanded_chunks)
-                
-                # Deduplicate and get top chunks
-                unique_chunks = {}
-                for doc, score in all_chunks:
-                    if doc.page_content not in unique_chunks:
-                        unique_chunks[doc.page_content] = (doc, score)
-                
-                # Sort by score and get top 8 (increased from 5)
-                sorted_chunks = sorted(unique_chunks.values(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0)
-                top_chunks = sorted_chunks[:8]
-                
-                # Print search scores for debugging
-                print("Top search scores:", [round(c[1], 4) for c in top_chunks])
-                best_score = top_chunks[0][1] if top_chunks else None
-                print(f"Best search score: {best_score}")
-                
-                #  IMPROVED: Use real AI to generate answer with fallback handling
+            # Strategy 1: Original semantic search
+            print("🔍 Strategy 1: Semantic search")
+            semantic_chunks = retrieve_relevant_chunks(question, vectorstore, top_k=5)
+            all_chunks.extend(semantic_chunks)
+            
+            # Strategy 2: Hybrid search (simplified version)
+            print("🔍 Strategy 2: Hybrid search")
+            hybrid_chunks = hybrid_search(question, vectorstore, top_k=5)
+            all_chunks.extend(hybrid_chunks)
+            
+            # Strategy 3: Expanded query search
+            print("🔍 Strategy 3: Expanded query search")
+            for expanded_query in expanded_queries[:5]:  # Use top 5 expanded queries
+                expanded_chunks = retrieve_relevant_chunks(expanded_query, vectorstore, top_k=3)
+                all_chunks.extend(expanded_chunks)
+            
+            # Deduplicate and get top chunks
+            unique_chunks = {}
+            for doc, score in all_chunks:
+                if doc.page_content not in unique_chunks:
+                    unique_chunks[doc.page_content] = (doc, score)
+            
+            # Sort by score and get top 8 (increased from 5)
+            sorted_chunks = sorted(unique_chunks.values(), key=lambda x: x[1] if isinstance(x[1], (int, float)) else 0)
+            top_chunks = sorted_chunks[:8]
+            
+            # Print search scores for debugging
+            print("Top search scores:", [round(c[1], 4) for c in top_chunks])
+            best_score = top_chunks[0][1] if top_chunks else None
+            print(f"Best search score: {best_score}")
+            
+            #  IMPROVED: Use real AI to generate answer with fallback handling
+            context = "\n\n".join([c[0].page_content for c in top_chunks])
+            print(f"Context passed to LLM (first 500 chars):\n{context[:500]}\n---")
+            prompt = build_insurance_prompt(context, question)
+            
+            # 🔧 NEW: Check confidence and generate answer with improved fallback
+            try:
+                # Convert tuples to expected dictionary format
+                formatted_chunks = [{'chunk': c[0].page_content} for c in top_chunks]
+                print(f"🔧 Calling Gemini with {len(formatted_chunks)} chunks")
+                answer = answer_question(
+                    question,
+                    top_chunks=formatted_chunks,
+                    method="auto",  # This will try Gemini first, then HuggingFace, then fallback
+                    custom_prompt=prompt
+                )
+                print("LLM answer:", answer)
+            except Exception as e:
+                print(f"❌ All AI APIs failed: {str(e)}")
+                # Generate fallback answer from context
                 context = "\n\n".join([c[0].page_content for c in top_chunks])
-                print(f"Context passed to LLM (first 500 chars):\n{context[:500]}\n---")
-                prompt = build_insurance_prompt(context, question)
-                
-                # 🔧 NEW: Check confidence and generate answer with improved fallback
-                try:
-                    # Convert tuples to expected dictionary format
-                    formatted_chunks = [{'chunk': c[0].page_content} for c in top_chunks]
-                    print(f"🔧 Calling Gemini with {len(formatted_chunks)} chunks")
-                    answer = answer_question(
-                        question,
-                        top_chunks=formatted_chunks,
-                        method="auto",  # This will try Gemini first, then HuggingFace, then fallback
-                        custom_prompt=prompt
-                    )
-                    print("LLM answer:", answer)
-                except Exception as e:
-                    print(f"❌ All AI APIs failed: {str(e)}")
-                    # Generate fallback answer from context
-                    context = "\n\n".join([c[0].page_content for c in top_chunks])
-                    answer = generate_fallback_answer(question, context)
-                    print("Fallback answer:", answer)
-                
-                answers.append(answer.strip())
-                print(f"✅ Final answer for query {i}: {answer.strip()}")
+                answer = generate_fallback_answer(question, context)
+                print("Fallback answer:", answer)
             
-            print(f"🎉 Successfully processed {len(answers)} questions")
-            return {"answers": answers}
-            
-        finally:
-            # Clean up temporary file
-            if os.path.exists(doc_path):
-                os.unlink(doc_path)
-                
-    except requests.RequestException as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download document: {str(e)}")
+            answers.append(answer.strip())
+            print(f"✅ Final answer for query {i}: {answer.strip()}")
+        
+        print(f"🎉 Successfully processed {len(answers)} questions")
+        return {"answers": answers}
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
