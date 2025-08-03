@@ -18,10 +18,13 @@ load_dotenv()
 # Check if required environment variables are set
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
 
 # Model priority for speed (fastest first) - FREE alternatives only
-FAST_MODELS = ["gemini", "huggingface"]
+FAST_MODELS = ["mistral", "gemini", "huggingface"]
 
+if not MISTRAL_API_KEY:
+    print("⚠️ Warning: MISTRAL_API_KEY not found in environment variables")
 if not GEMINI_API_KEY:
     print("⚠️ Warning: GEMINI_API_KEY not found in environment variables")
 if not HF_TOKEN:
@@ -31,12 +34,14 @@ if not HF_TOKEN:
 
 # Determine which models are available (FREE alternatives only)
 AVAILABLE_MODELS = []
+if MISTRAL_API_KEY:
+    AVAILABLE_MODELS.append("mistral")
 if GEMINI_API_KEY:
     AVAILABLE_MODELS.append("gemini")
 if HF_TOKEN:
     AVAILABLE_MODELS.append("huggingface")
 
-print(f"🚀 Available FREE models: {AVAILABLE_MODELS}")
+print(f"🚀 Available models: {AVAILABLE_MODELS}")
 
 # Import our enhanced vector database functions
 from llm_query_retrieval_enhanced import (
@@ -419,11 +424,11 @@ async def hackrx_run(
             try:
                 # Convert tuples to expected dictionary format
                 formatted_chunks = [{'chunk': c[0].page_content} for c in top_chunks]
-                print(f"🔧 Calling Gemini with {len(formatted_chunks)} chunks")
+                print(f"🔧 Calling Mistral with {len(formatted_chunks)} chunks")
                 answer = answer_question(
                     question,
                     top_chunks=formatted_chunks,
-                    method="auto",  # This will try Gemini first, then HuggingFace, then fallback
+                    method="auto",  # This will try Mistral first, then Gemini, then HuggingFace, then fallback
                     custom_prompt=prompt
                 )
                 print("LLM answer:", answer)

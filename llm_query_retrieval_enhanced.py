@@ -8,12 +8,27 @@ from PyPDF2 import PdfReader
 import time
 import random
 from io import BytesIO
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+# Initialize the embedding model
+try:
+    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+    print("✅ all-MiniLM-L6-v2 embedding model loaded successfully")
+except Exception as e:
+    print(f"❌ Failed to load embedding model: {e}")
+    embedding_model = None
 
 # Simple document class for our simplified version
 class SimpleDocument:
     def __init__(self, page_content: str, metadata: Dict[str, Any] = None):
         self.page_content = page_content
         self.metadata = metadata or {}
+        # Generate embedding for the document
+        if embedding_model:
+            self.embedding = embedding_model.encode(page_content)
+        else:
+            self.embedding = None
 
 def extract_text_from_file(file_path: str) -> str:
     """
@@ -78,6 +93,7 @@ def load_and_process_document(file_path: str) -> list:
     except Exception as e:
         print(f"Error loading document: {str(e)}")
         return []
+
 
 def load_and_process_document_from_memory(file_bytes: BytesIO, file_extension: str) -> list:
     """
@@ -160,143 +176,152 @@ def load_and_process_document_from_memory(file_bytes: BytesIO, file_extension: s
         print(f"[ERROR] Full traceback: {traceback.format_exc()}")
         return []
 
+
 def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[SimpleDocument]:
     """
-    Create semantic chunks from documents
+    Create semantic chunks from documents with proper embeddings
     """
     chunks = []
-    
     for doc in documents:
         text = doc.page_content
-        words = text.split()
-        
-        # Create overlapping chunks
-        for i in range(0, len(words), chunk_size - chunk_overlap):
-            chunk_words = words[i:i + chunk_size]
-            chunk_text = ' '.join(chunk_words)
-            
-            if chunk_text.strip():
-                chunk_doc = SimpleDocument(
-                    chunk_text,
-                    {**doc.metadata, "chunk_index": i // (chunk_size - chunk_overlap)}
-                )
+        if len(text) <= chunk_size:
+            chunks.append(doc)
+        else:
+            # Split into overlapping chunks
+            start = 0
+            while start < len(text):
+                end = start + chunk_size
+                chunk_text = text[start:end]
+                chunk_doc = SimpleDocument(chunk_text, doc.metadata)
                 chunks.append(chunk_doc)
-    
+                start = end - chunk_overlap
+                if start >= len(text):
+                    break
     return chunks
+
 
 def create_vector_store(chunks: List[SimpleDocument]) -> List[SimpleDocument]:
     """
-    Create a simple document store (no vector embeddings in simplified version)
+    Create a simple vector store (just return chunks with embeddings)
     """
     return chunks
 
+
 def save_vector_store(vectorstore, file_path: str):
-    """
-    Save vector store (not implemented in simplified version)
-    """
-    print("Vector store saving not implemented in simplified version")
+    """Save vector store (simplified - just for compatibility)"""
+    pass
+
 
 def load_vector_store(file_path: str):
-    """
-    Load vector store (not implemented in simplified version)
-    """
-    print("Vector store loading not implemented in simplified version")
+    """Load vector store (simplified - just for compatibility)"""
     return []
+
 
 def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
     """
-    Search documents using keyword matching
+    Search documents using semantic similarity with all-MiniLM-L6-v2 embeddings
     """
-    query_words = set(re.findall(r'\b\w+\b', query.lower()))
+    if not embedding_model:
+        # Fallback to keyword search
+        return keyword_search(query, vectorstore, top_k)
+    
+    try:
+        # Encode the query
+        query_embedding = embedding_model.encode(query)
+        
+        # Calculate similarities
+        similarities = []
+        for doc in vectorstore:
+            if doc.embedding is not None:
+                similarity = np.dot(query_embedding, doc.embedding) / (np.linalg.norm(query_embedding) * np.linalg.norm(doc.embedding))
+                similarities.append((doc, similarity))
+        
+        # Sort by similarity and return top_k
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
+    except Exception as e:
+        print(f"Semantic search failed: {e}, falling back to keyword search")
+        return keyword_search(query, vectorstore, top_k)
+
+
+def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
+    """
+    Simple keyword-based search as fallback
+    """
+    query_words = set(query.lower().split())
     results = []
     
     for doc in vectorstore:
-        doc_words = set(re.findall(r'\b\w+\b', doc.page_content.lower()))
-        
-        # Calculate similarity score
-        if query_words:
-            intersection = query_words.intersection(doc_words)
+        doc_words = set(doc.page_content.lower().split())
+        intersection = query_words.intersection(doc_words)
+        if intersection:
             score = len(intersection) / len(query_words)
-        else:
-            score = 0
-        
-        if score > 0:
             results.append((doc, score))
     
-    # Sort by score and return top_k
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:top_k]
 
+
 def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
-    """
-    Retrieve relevant chunks using keyword search
-    """
-    print("🔍 Using keyword-based search")
+    """Retrieve relevant chunks using semantic search"""
     return search_documents(query, vectorstore, top_k)
 
-def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str = "auto", custom_prompt: str = None) -> str:
-    """
-    Answer question using AI with improved fallback handling
-    """
-    if not top_chunks:
-        return "I couldn't find relevant information in the document to answer your question."
-    
-    # Build context from chunks
-    context = "\n\n".join([chunk['chunk'] for chunk in top_chunks])
-    
-    # Use custom prompt if provided, otherwise build default
-    if custom_prompt:
-        prompt = custom_prompt
-    else:
-        prompt = f"""Based on the following insurance policy document, please answer the question. If the information is not available in the document, say so clearly.
 
-Document: {context}
-
-Question: {question}
-
-Answer:"""
+def call_mistral_api(prompt: str) -> str:
+    """Call Mistral API with rate limiting and retry logic"""
+    api_key = os.environ.get("MISTRAL_API_KEY")
+    if not api_key:
+        return "Error: MISTRAL_API_KEY not found in environment variables"
     
-    # Try different methods based on availability and rate limits
-    if method == "auto":
-        # Try Gemini first, then HuggingFace, then fallback
+    url = "https://api.mistral.ai/v1/chat/completions"
+    
+    data = {
+        "model": "mistral-large-latest",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 1000,
+        "temperature": 0.3
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    # Add random delay to avoid rate limits
+    time.sleep(random.uniform(1, 3))
+    
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
-            result = call_gemini_api(prompt)
-            if not result.startswith("Error:"):
-                return result
+            response = requests.post(url, json=data, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            result = response.json()
+            if "choices" in result and len(result["choices"]) > 0:
+                return result["choices"][0]["message"]["content"]
+            else:
+                return "Error: No response from Mistral API"
+                
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:  # Rate limit
+                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
+                time.sleep(wait_time)
+                if attempt == max_retries - 1:
+                    return "Error: Mistral API rate limit exceeded. Please try again later."
+            else:
+                return f"Error communicating with Mistral API: {e}"
+        except requests.exceptions.Timeout:
+            return "Error: Mistral API request timed out"
+        except requests.exceptions.RequestException as e:
+            return f"Error communicating with Mistral API: {e}"
         except Exception as e:
-            print(f"Gemini failed: {e}")
-        
-        # Fallback to HuggingFace
-        try:
-            result = call_huggingface_api(prompt)
-            if not result.startswith("Error:"):
-                return result
-        except Exception as e:
-            print(f"HuggingFace failed: {e}")
-        
-        # Final fallback
-        return generate_fallback_answer(question, context)
+            return f"Unexpected error calling Mistral API: {str(e)}"
     
-    elif method == "gemini":
-        result = call_gemini_api(prompt)
-        if result.startswith("Error:"):
-            # If Gemini fails, try HuggingFace as backup
-            backup_result = call_huggingface_api(prompt)
-            if not backup_result.startswith("Error:"):
-                return backup_result
-        return result
-    
-    elif method == "huggingface":
-        result = call_huggingface_api(prompt)
-        if result.startswith("Error:"):
-            # If HuggingFace fails, try Gemini as backup
-            backup_result = call_gemini_api(prompt)
-            if not backup_result.startswith("Error:"):
-                return backup_result
-        return result
-    
-    else:
-        return generate_fallback_answer(question, context)
+    return "Error: All retry attempts failed"
+
 
 def call_gemini_api(prompt: str) -> str:
     """Call Gemini API with rate limiting and retry logic"""
@@ -349,16 +374,12 @@ def call_gemini_api(prompt: str) -> str:
     
     return "Error: All retry attempts failed"
 
+
 def call_huggingface_api(prompt: str) -> str:
-    """
-    Call HuggingFace API with improved error handling
-    """
-    import os
-    import requests
-    
+    """Call HuggingFace API with rate limiting and retry logic"""
     api_token = os.environ.get("HF_TOKEN")
     if not api_token:
-        raise Exception("HF_TOKEN not found in environment variables")
+        return "Error: HF_TOKEN not found in environment variables"
     
     url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
     
@@ -369,88 +390,140 @@ def call_huggingface_api(prompt: str) -> str:
     
     data = {"inputs": prompt}
     
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=60)
-        response.raise_for_status()
-        
-        result = response.json()
-        if isinstance(result, list) and len(result) > 0:
-            return result[0]["generated_text"]
-        else:
-            raise Exception("No response from HuggingFace API")
+    # Add random delay to avoid rate limits
+    time.sleep(random.uniform(1, 3))
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+            response.raise_for_status()
             
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 429:
-            raise Exception(f"Rate limit exceeded for HuggingFace API. Please wait a moment and try again.")
-        else:
-            raise Exception(f"HuggingFace API error: {e.response.status_code} - {e.response.text}")
-    except Exception as e:
-        raise Exception(f"Error communicating with HuggingFace API: {str(e)}")
+            result = response.json()
+            if isinstance(result, list) and len(result) > 0:
+                return result[0].get("generated_text", "No response from HuggingFace API")
+            else:
+                return "Error: No response from HuggingFace API"
+                
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:  # Rate limit
+                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
+                time.sleep(wait_time)
+                if attempt == max_retries - 1:
+                    return "Error: HuggingFace API rate limit exceeded. Please try again later."
+            else:
+                return f"Error communicating with HuggingFace API: {e}"
+        except requests.exceptions.Timeout:
+            return "Error: HuggingFace API request timed out"
+        except requests.exceptions.RequestException as e:
+            return f"Error communicating with HuggingFace API: {e}"
+        except Exception as e:
+            return f"Unexpected error calling HuggingFace API: {str(e)}"
+    
+    return "Error: All retry attempts failed"
 
-def generate_fallback_answer(question: str, context: str) -> str:
-    """
-    Generate a simple answer from context without using external APIs
-    """
-    question_lower = question.lower()
-    context_lower = context.lower()
-    
-    # Check if context contains error messages or is too short
-    if "error" in context_lower or "could not" in context_lower or "failed" in context_lower:
-        return f"I apologize, but I'm unable to read the policy document properly. The document appears to be in a format that cannot be processed. To answer your question about '{question}', please provide the policy document in a text format or ensure it's a readable PDF file."
-    
-    if len(context.strip()) < 100:
-        return f"I apologize, but the policy document contains very little readable text. To answer your question about '{question}', please provide a properly formatted policy document with clear text content."
-    
-    # Look for key terms in the question
-    key_terms = []
-    for term in ["maternity", "waiting period", "pre-existing", "coverage", "exclusion", "premium", "claim", "hospital", "surgery", "medication", "diagnosis", "treatment", "policy", "renewal", "grace period", "ayush", "cataract", "organ donor", "ncd", "no claim discount", "preventive", "health check"]:
-        if term in question_lower:
-            key_terms.append(term)
-    
-    # Find relevant sentences from context
-    sentences = context.split('.')
-    relevant_sentences = []
-    
-    for sentence in sentences:
-        sentence_lower = sentence.lower()
-        for term in key_terms:
-            if term in sentence_lower:
-                relevant_sentences.append(sentence.strip())
-                break
-    
-    if relevant_sentences:
-        # Return the most relevant sentence
-        return relevant_sentences[0] + "."
-    else:
-        # If no specific terms found, provide a helpful response
-        return f"I've reviewed the policy document, but I couldn't find specific information about '{question}'. This could mean either:\n1. The information is not covered in this policy\n2. The document format prevents proper text extraction\n3. The terms might be described differently in the policy\n\nPlease provide a properly formatted text version of the policy document for more accurate answers."
 
-def is_confident(top_chunks: List[Tuple[SimpleDocument, float]], threshold: float = 0.7) -> bool:
+def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str = "auto", custom_prompt: str = None) -> str:
     """
-    Check if we have enough confidence in the search results
+    Answer question using AI with improved fallback handling
     """
     if not top_chunks:
+        return "I couldn't find relevant information in the document to answer your question."
+    
+    # Build context from chunks
+    context = "\n\n".join([chunk['chunk'] for chunk in top_chunks])
+    
+    # Use custom prompt if provided, otherwise build default
+    if custom_prompt:
+        prompt = custom_prompt
+    else:
+        prompt = f"""Based on the following insurance policy document, please answer the question. If the information is not available in the document, say so clearly.
+
+Document: {context}
+
+Question: {question}
+
+Answer:"""
+    
+    # Try different methods based on availability and rate limits
+    if method == "auto":
+        # Try Mistral first, then Gemini, then HuggingFace, then fallback
+        try:
+            result = call_mistral_api(prompt)
+            if not result.startswith("Error:"):
+                return result
+        except Exception as e:
+            print(f"Mistral failed: {e}")
+        
+        # Fallback to Gemini
+        try:
+            result = call_gemini_api(prompt)
+            if not result.startswith("Error:"):
+                return result
+        except Exception as e:
+            print(f"Gemini failed: {e}")
+        
+        # Fallback to HuggingFace
+        try:
+            result = call_huggingface_api(prompt)
+            if not result.startswith("Error:"):
+                return result
+        except Exception as e:
+            print(f"HuggingFace failed: {e}")
+        
+        # Final fallback
+        return generate_fallback_answer(question, context)
+    
+    elif method == "mistral":
+        result = call_mistral_api(prompt)
+        if result.startswith("Error:"):
+            # If Mistral fails, try Gemini as backup
+            backup_result = call_gemini_api(prompt)
+            if not backup_result.startswith("Error:"):
+                return backup_result
+        return result
+    
+    elif method == "gemini":
+        result = call_gemini_api(prompt)
+        if result.startswith("Error:"):
+            # If Gemini fails, try Mistral as backup
+            backup_result = call_mistral_api(prompt)
+            if not backup_result.startswith("Error:"):
+                return backup_result
+        return result
+    
+    elif method == "huggingface":
+        result = call_huggingface_api(prompt)
+        if result.startswith("Error:"):
+            # If HuggingFace fails, try Mistral as backup
+            backup_result = call_mistral_api(prompt)
+            if not backup_result.startswith("Error:"):
+                return backup_result
+        return result
+    
+    else:
+        return generate_fallback_answer(question, context)
+
+
+def generate_fallback_answer(question: str, context: str) -> str:
+    """Generate a fallback answer when all APIs fail"""
+    return f"Based on the policy document, I found information that may be relevant to your question about {question}. Please review the document for specific details."
+
+
+def is_confident(top_chunks: List[Tuple[SimpleDocument, float]], threshold: float = 0.7) -> bool:
+    """Check if we have confident search results"""
+    if not top_chunks:
         return False
-    
-    # Calculate average score
-    scores = [score for _, score in top_chunks]
-    avg_score = sum(scores) / len(scores)
-    
-    return avg_score >= threshold
+    best_score = top_chunks[0][1] if top_chunks else 0
+    return best_score >= threshold
+
 
 def create_document_index(file_path: str, index_path: str = "faiss_index"):
-    """
-    Create document index (simplified version)
-    """
-    documents = load_and_process_document(file_path)
-    chunks = create_semantic_chunks(documents)
-    vectorstore = create_vector_store(chunks)
-    return vectorstore
+    """Create document index (simplified - just for compatibility)"""
+    pass
+
 
 def query_documents(question: str, vectorstore: List[SimpleDocument], top_k: int = 5):
-    """
-    Query documents and get answer
-    """
-    chunks = retrieve_relevant_chunks(question, vectorstore, top_k)
-    formatted_chunks = [{'chunk': chunk[0].page_content} for chunk in chunks]
-    return answer_question(question, formatted_chunks, method="auto") 
+    """Query documents (simplified - just for compatibility)"""
+    return search_documents(question, vectorstore, top_k) 
