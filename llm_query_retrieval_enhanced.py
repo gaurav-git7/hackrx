@@ -304,7 +304,7 @@ def call_gemini_api(prompt: str) -> str:
     
     try:
         response = requests.post(url, json=data, timeout=30)
-    response.raise_for_status()
+        response.raise_for_status()
         
         result = response.json()
         if "candidates" in result and len(result["candidates"]) > 0:
