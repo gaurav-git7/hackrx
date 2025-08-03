@@ -19,6 +19,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+import PyPDF2
 
 # 1. Enhanced Document Loading and Processing
 
@@ -28,10 +29,33 @@ def load_and_process_document(file_path: str) -> List[Any]:
         raise ValueError("❌ Only PDF files are supported in this enhanced version.")
     
     print(f"📄 Loading document: {file_path}")
-    loader = PyPDFLoader(file_path)
-    documents = loader.load()
     
-    print(f"📝 Document loaded with {len(documents)} pages")
+    try:
+        # Try PyPDFLoader first (uses PyMuPDF under the hood)
+        loader = PyPDFLoader(file_path)
+        documents = loader.load()
+        print(f"📝 Document loaded with PyPDFLoader: {len(documents)} pages")
+    except Exception as e:
+        print(f"⚠️ PyPDFLoader failed: {str(e)}")
+        print("🔄 Falling back to PyPDF2...")
+        
+        # Fallback to PyPDF2
+        documents = []
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for page_num, page in enumerate(pdf_reader.pages):
+                text = page.extract_text()
+                if text.strip():  # Only add non-empty pages
+                    # Create a document object similar to LangChain's format
+                    from langchain.schema import Document
+                    doc = Document(
+                        page_content=text,
+                        metadata={"source": file_path, "page": page_num + 1}
+                    )
+                    documents.append(doc)
+        
+        print(f"📝 Document loaded with PyPDF2: {len(documents)} pages")
+    
     return documents
 
 def create_semantic_chunks(documents: List[Any], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Any]:
