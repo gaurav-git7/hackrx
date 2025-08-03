@@ -53,7 +53,7 @@ def test_huggingface_api():
         print("❌ HF_TOKEN not found in environment variables")
         return False
     
-    url = "https://api-inference.huggingface.co/models/gpt2"
+    url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
     
     headers = {
         "Authorization": f"Bearer {api_token}",
