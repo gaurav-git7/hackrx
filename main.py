@@ -95,65 +95,39 @@ def keyword_search(query, vectorstore, top_k=5):
     query_words = re.findall(r'\b\w+\b', query.lower())
     all_chunks = []
     
-    # Check if we have a proper vectorstore or fallback document list
-    if hasattr(vectorstore, 'docstore'):
-        # Get all documents from vectorstore
-        all_docs = vectorstore.docstore._dict
+    # Search through document list
+    for doc in vectorstore:
+        doc_content = doc.page_content.lower()
+        score = 0
         
-        for doc_id, doc in all_docs.items():
-            doc_content = doc.page_content.lower()
-            score = 0
-            
-            # Count exact word matches
-            for word in query_words:
-                if word in doc_content:
-                    score += 1
-            
-            # Normalize score by query length
-            if len(query_words) > 0:
-                score = score / len(query_words)
-            
-            if score > 0:
-                all_chunks.append((doc, score))
-    else:
-        # Fallback: search through document list
-        for doc in vectorstore:
-            doc_content = doc.page_content.lower()
-            score = 0
-            
-            # Count exact word matches
-            for word in query_words:
-                if word in doc_content:
-                    score += 1
-            
-            # Normalize score by query length
-            if len(query_words) > 0:
-                score = score / len(query_words)
-            
-            if score > 0:
-                all_chunks.append((doc, score))
+        # Count exact word matches
+        for word in query_words:
+            if word in doc_content:
+                score += 1
+        
+        # Normalize score by query length
+        if len(query_words) > 0:
+            score = score / len(query_words)
+        
+        if score > 0:
+            all_chunks.append((doc, score))
     
     # Sort by score and return top_k
     all_chunks.sort(key=lambda x: x[1], reverse=True)
     return all_chunks[:top_k]
 
 def hybrid_search(query, vectorstore, top_k=5):
-    """Combine semantic and keyword search"""
-    # Check if we have a proper vectorstore
-    if not hasattr(vectorstore, 'similarity_search_with_score'):
-        print("⚠️ Hybrid search not available with fallback mode")
-        return []
-    
-    # Get semantic results
+    """Combine different search strategies"""
+    # Get keyword results from retrieve_relevant_chunks
     semantic_results = retrieve_relevant_chunks(query, vectorstore, top_k=top_k)
     
-    # Get keyword results
+    # Get additional keyword results
     keyword_results = keyword_search(query, vectorstore, top_k=top_k)
     
     # Combine and deduplicate
     combined = {}
     
-    # Add semantic results (FAISS scores are distance-based, so lower is better)
+    # Add semantic results
     for doc, score in semantic_results:
         combined[doc.page_content] = (doc, 1.0 - score)  # Convert to similarity score
     
@@ -335,11 +309,10 @@ async def hackrx_run(
                 semantic_chunks = retrieve_relevant_chunks(question, vectorstore, top_k=5)
                 all_chunks.extend(semantic_chunks)
                 
-                # Strategy 2: Hybrid search (only if we have a proper vectorstore)
-                if hasattr(vectorstore, 'similarity_search_with_score'):
-                    print("🔍 Strategy 2: Hybrid search")
-                    hybrid_chunks = hybrid_search(question, vectorstore, top_k=5)
-                    all_chunks.extend(hybrid_chunks)
+                # Strategy 2: Hybrid search (simplified version)
+                print("🔍 Strategy 2: Hybrid search")
+                hybrid_chunks = hybrid_search(question, vectorstore, top_k=5)
+                all_chunks.extend(hybrid_chunks)
                 
                 # Strategy 3: Expanded query search
                 print("🔍 Strategy 3: Expanded query search")

@@ -1,195 +1,125 @@
 import os
 from dotenv import load_dotenv
+import json
+import requests
+import re
+from typing import List, Dict, Any
+import PyPDF2
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Workaround for OpenMP runtime error on Windows (PyTorch + faiss)
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
 # Get HF_TOKEN but don't validate immediately - will check when needed
 hf_token = os.environ.get("HF_TOKEN")
 
-import json
-import requests
-from typing import List, Dict, Any
-
-# LangChain imports for enhanced document processing
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-import PyPDF2
-
-# Try to import HuggingFaceEmbeddings, fallback to simple embeddings if not available
-try:
-    from langchain_community.embeddings import HuggingFaceEmbeddings
-    HUGGINGFACE_AVAILABLE = True
-except ImportError:
-    print("⚠️ HuggingFaceEmbeddings not available, using fallback embeddings")
-    HUGGINGFACE_AVAILABLE = False
+# Simple document class to replace LangChain Document
+class SimpleDocument:
+    def __init__(self, page_content: str, metadata: Dict[str, Any] = None):
+        self.page_content = page_content
+        self.metadata = metadata or {}
 
 # 1. Enhanced Document Loading and Processing
 
-def load_and_process_document(file_path: str) -> List[Any]:
-    """Load and process document using LangChain with better semantic chunking"""
+def load_and_process_document(file_path: str) -> List[SimpleDocument]:
+    """Load and process document using PyPDF2"""
     if not file_path.endswith(".pdf"):
-        raise ValueError("❌ Only PDF files are supported in this enhanced version.")
+        raise ValueError("❌ Only PDF files are supported in this simplified version.")
     
     print(f"📄 Loading document: {file_path}")
     
+    documents = []
     try:
-        # Try PyPDFLoader first (uses PyMuPDF under the hood)
-        loader = PyPDFLoader(file_path)
-        documents = loader.load()
-        print(f"📝 Document loaded with PyPDFLoader: {len(documents)} pages")
-    except Exception as e:
-        print(f"⚠️ PyPDFLoader failed: {str(e)}")
-        print("🔄 Falling back to PyPDF2...")
-        
-        # Fallback to PyPDF2
-        documents = []
         with open(file_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
             for page_num, page in enumerate(pdf_reader.pages):
                 text = page.extract_text()
                 if text.strip():  # Only add non-empty pages
-                    # Create a document object similar to LangChain's format
-                    from langchain.schema import Document
-                    doc = Document(
+                    doc = SimpleDocument(
                         page_content=text,
                         metadata={"source": file_path, "page": page_num + 1}
                     )
                     documents.append(doc)
         
         print(f"📝 Document loaded with PyPDF2: {len(documents)} pages")
+    except Exception as e:
+        print(f"❌ Error loading PDF: {str(e)}")
+        raise
     
     return documents
 
-def create_semantic_chunks(documents: List[Any], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Any]:
-    """Create semantic-aware chunks with improved parameters for insurance policies"""
-    print("🔪 Creating semantic chunks...")
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ".", "!", "?", " "]
-    )
-    chunks = text_splitter.split_documents(documents)
-    print(f"✅ Created {len(chunks)} semantic chunks")
+def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[SimpleDocument]:
+    """Create simple text chunks"""
+    print("🔪 Creating text chunks...")
+    chunks = []
+    
+    for doc in documents:
+        text = doc.page_content
+        words = text.split()
+        
+        # Create chunks based on word count
+        for i in range(0, len(words), chunk_size - chunk_overlap):
+            chunk_words = words[i:i + chunk_size]
+            chunk_text = " ".join(chunk_words)
+            
+            if chunk_text.strip():
+                chunk_doc = SimpleDocument(
+                    page_content=chunk_text,
+                    metadata=doc.metadata.copy()
+                )
+                chunks.append(chunk_doc)
+    
+    print(f"✅ Created {len(chunks)} text chunks")
     return chunks
 
 # 2. Enhanced Embedding and Vector Storage
 
-def create_vector_store(chunks: List[Any], embedding_model_name: str = "huggingface/sentence-transformers/all-MiniLM-L6-v2") -> FAISS:
-    """Create FAISS vector store with enhanced embeddings"""
-    print(f"🤖 Creating embeddings using {embedding_model_name}...")
+def create_vector_store(chunks: List[SimpleDocument]) -> List[SimpleDocument]:
+    """Create simple document store for keyword search"""
+    print("📚 Creating simple document store for keyword search...")
     
-    if not HUGGINGFACE_AVAILABLE:
-        print("⚠️ Using simple keyword-based search as fallback")
-        # Create a simple document store without embeddings
-        from langchain.schema import Document
-        simple_docs = []
-        for i, chunk in enumerate(chunks):
-            simple_docs.append(Document(
-                page_content=chunk.page_content,
-                metadata={"index": i, "source": chunk.metadata.get("source", "unknown")}
-            ))
-        # Return a simple document list that can be searched
-        return simple_docs
+    # Add index to metadata for better tracking
+    for i, chunk in enumerate(chunks):
+        chunk.metadata["index"] = i
     
-    try:
-        embedding_model = HuggingFaceEmbeddings(
-            model_name=embedding_model_name,
-            model_kwargs={'device': 'cpu'},  # Force CPU to avoid GPU issues
-            encode_kwargs={'normalize_embeddings': True}
-        )
-        vectorstore = FAISS.from_documents(chunks, embedding_model)
-        print(f"✅ Vector store created with {len(chunks)} embeddings")
-        return vectorstore
-    except Exception as e:
-        print(f"❌ Error creating vector store: {str(e)}")
-        print("🔄 Trying with fallback embedding model...")
-        # Fallback to a simpler model
-        fallback_model = "sentence-transformers/all-MiniLM-L6-v2"
-        embedding_model = HuggingFaceEmbeddings(
-            model_name=fallback_model,
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
-        vectorstore = FAISS.from_documents(chunks, embedding_model)
-        print(f"✅ Vector store created with fallback model: {len(chunks)} embeddings")
-        return vectorstore
+    print(f"✅ Document store created with {len(chunks)} documents")
+    return chunks
 
 def save_vector_store(vectorstore, index_path: str = "faiss_index"):
-    """Save FAISS index locally"""
-    print(f"💾 Saving vector store to {index_path}...")
-    
-    # Check if we have a FAISS vectorstore that can be saved
-    if hasattr(vectorstore, 'save_local'):
-        vectorstore.save_local(index_path)
-        print("✅ Vector store saved successfully")
-    else:
-        print("⚠️ Cannot save simple document list, skipping save")
+    """Save document store locally (simplified version)"""
+    print(f"💾 Saving document store to {index_path}...")
+    print("⚠️ Document store saving not implemented in simplified version")
+    # In a simplified version, we don't save the document store
+    # It's recreated each time from the PDF
 
-def load_vector_store(index_path: str = "faiss_index", embedding_model_name: str = "huggingface/sentence-transformers/all-MiniLM-L6-v2"):
-    """Load existing FAISS index"""
-    print(f"📂 Loading vector store from {index_path}...")
-    
-    if not HUGGINGFACE_AVAILABLE:
-        print("⚠️ HuggingFace not available, cannot load vector store")
-        return None
-    
-    try:
-        embedding_model = HuggingFaceEmbeddings(
-            model_name=embedding_model_name,
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
-        vectorstore = FAISS.load_local(index_path, embedding_model, allow_dangerous_deserialization=True)
-        print("✅ Vector store loaded successfully")
-        return vectorstore
-    except Exception as e:
-        print(f"❌ Error loading vector store: {str(e)}")
-        raise
+def load_vector_store(index_path: str = "faiss_index"):
+    """Load existing document store (simplified version)"""
+    print(f"📂 Loading document store from {index_path}...")
+    print("⚠️ Document store loading not implemented in simplified version")
+    return None
 
 # 3. Enhanced Search and Retrieval
 
 def search_documents(query: str, vectorstore, top_k: int = 5) -> List[Dict[str, Any]]:
-    """Search documents using enhanced similarity search"""
+    """Search documents using keyword-based search"""
     print(f"🔍 Searching for: '{query}'")
     
-    # Check if we have a FAISS vectorstore or fallback document list
-    if hasattr(vectorstore, 'similarity_search_with_score'):
-        # Use similarity search with metadata
-        docs_and_scores = vectorstore.similarity_search_with_score(query, k=top_k)
-        
-        results = []
-        for i, (doc, score) in enumerate(docs_and_scores):
+    results = []
+    query_words = query.lower().split()
+    
+    for i, doc in enumerate(vectorstore):
+        content = doc.page_content.lower()
+        score = sum(1 for word in query_words if word in content)
+        if score > 0:
             results.append({
                 "chunk": doc.page_content,
-                "score": float(score),
+                "score": 1.0 / (score + 1),  # Lower score = better match
                 "index": i,
                 "metadata": doc.metadata
             })
-    else:
-        # Fallback to simple keyword search
-        print("🔍 Using keyword-based search as fallback")
-        results = []
-        query_words = query.lower().split()
-        
-        for i, doc in enumerate(vectorstore):
-            content = doc.page_content.lower()
-            score = sum(1 for word in query_words if word in content)
-            if score > 0:
-                results.append({
-                    "chunk": doc.page_content,
-                    "score": 1.0 / (score + 1),  # Lower score = better match
-                    "index": i,
-                    "metadata": doc.metadata
-                })
-        
-        # Sort by score and take top_k
-        results.sort(key=lambda x: x["score"])
-        results = results[:top_k]
+    
+    # Sort by score and take top_k
+    results.sort(key=lambda x: x["score"])
+    results = results[:top_k]
     
     print(f"✅ Found {len(results)} relevant chunks")
     return results
@@ -203,29 +133,20 @@ def is_confident(top_chunks, score_threshold=0.45):
     return best_score < score_threshold
 
 def retrieve_relevant_chunks(query, vectorstore, top_k=8):
-    """Fetch the most semantically relevant chunks for a query, sorted by score (lowest first)"""
-    # Check if we have a FAISS vectorstore or fallback document list
-    if hasattr(vectorstore, 'similarity_search_with_score'):
-        # similarity_search_with_score returns list of (Document, score)
-        top_chunks = vectorstore.similarity_search_with_score(query, k=top_k)
-        # Sort by score (lowest = most similar)
-        top_chunks = sorted(top_chunks, key=lambda x: x[1])
-        return top_chunks
-    else:
-        # Fallback to simple keyword search
-        print("🔍 Using keyword-based search as fallback")
-        results = []
-        query_words = query.lower().split()
-        
-        for i, doc in enumerate(vectorstore):
-            content = doc.page_content.lower()
-            score = sum(1 for word in query_words if word in content)
-            if score > 0:
-                results.append((doc, 1.0 / (score + 1)))  # (doc, score) tuple format
-        
-        # Sort by score (lowest = best match) and take top_k
-        results.sort(key=lambda x: x[1])
-        return results[:top_k]
+    """Fetch the most relevant chunks for a query using keyword search"""
+    print("🔍 Using keyword-based search")
+    results = []
+    query_words = query.lower().split()
+    
+    for i, doc in enumerate(vectorstore):
+        content = doc.page_content.lower()
+        score = sum(1 for word in query_words if word in content)
+        if score > 0:
+            results.append((doc, 1.0 / (score + 1)))  # (doc, score) tuple format
+    
+    # Sort by score (lowest = best match) and take top_k
+    results.sort(key=lambda x: x[1])
+    return results[:top_k]
 
 # 4. Enhanced Question Answering with External APIs
 

@@ -3,28 +3,10 @@ setuptools>=65.0.0
 wheel>=0.38.0
 
 # Core dependencies for LLM-powered query–retrieval system
-# PyMuPDF removed - using PyPDF2 instead for better deployment compatibility
+# Minimal dependencies for initial deployment
 PyPDF2==3.0.1
-python-docx==1.1.0
-extract-msg==0.41
-faiss-cpu==1.7.4
-numpy==1.24.3
 requests==2.31.0
 python-dotenv==1.0.0
-chromadb==0.4.22
-
-# LangChain dependencies - using more stable versions
-langchain==0.0.350
-langchain-community==0.0.10
-langchain-core==0.1.10
-langchain-text-splitters==0.0.1
-
-# ML/AI dependencies for embeddings and models (using pre-built wheels)
-sentence-transformers==2.2.2
-transformers==4.35.0
-
-# Additional dependencies for better build compatibility
-packaging>=21.0
 
 # Web framework dependencies
 fastapi==0.104.1
@@ -34,6 +16,11 @@ pydantic==2.5.0
 # Additional dependencies for document processing
 python-multipart==0.0.6
 
-# Temporarily remove problematic packages for initial deployment
-# sentence-transformers and langchain-unstructured can be added later
-# unstructured package can be added later if needed
+# Temporarily removed for deployment stability:
+# - faiss-cpu (causes build issues)
+# - chromadb (depends on faiss)
+# - langchain packages (can cause dependency conflicts)
+# - sentence-transformers (requires compilation)
+# - transformers (large package)
+# - numpy (included with other packages)
+# - python-docx, extract-msg (not essential for core functionality)
