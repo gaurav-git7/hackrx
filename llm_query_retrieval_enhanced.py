@@ -9,6 +9,10 @@ import time
 import random
 from io import BytesIO
 import numpy as np
+import concurrent.futures
+import threading
+import hashlib
+import pickle
 
 # Try to import sentence-transformers, but make it optional
 try:
@@ -23,6 +27,41 @@ try:
 except ImportError:
     print("⚠️ sentence-transformers not available, using keyword search only")
     embedding_model = None
+
+# Global session for connection pooling
+session = requests.Session()
+session.headers.update({
+    'User-Agent': 'InsuranceBot/1.0'
+})
+
+# Simple cache for processed documents
+document_cache = {}
+
+def get_document_hash(file_bytes: BytesIO) -> str:
+    """Generate hash for document caching"""
+    file_bytes.seek(0)
+    content = file_bytes.read()
+    return hashlib.md5(content).hexdigest()
+
+def load_cached_document(file_hash: str) -> Optional[List[SimpleDocument]]:
+    """Load cached document if available"""
+    cache_file = f"cache_{file_hash}.pkl"
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            print(f"Failed to load cache: {e}")
+    return None
+
+def save_cached_document(file_hash: str, documents: List[SimpleDocument]):
+    """Save processed documents to cache"""
+    cache_file = f"cache_{file_hash}.pkl"
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(documents, f)
+    except Exception as e:
+        print(f"Failed to save cache: {e}")
 
 # Simple document class for our simplified version
 class SimpleDocument:
@@ -102,106 +141,83 @@ def load_and_process_document(file_path: str) -> list:
 
 def load_and_process_document_from_memory(file_bytes: BytesIO, file_extension: str) -> list:
     """
-    Load and process document from BytesIO object in memory
+    Load and process document from memory with caching
     """
     try:
-        print(f"[DEBUG] Processing file with extension: {file_extension}")
-        print(f"[DEBUG] File bytes size: {len(file_bytes.getvalue())} bytes")
+        # Generate hash for caching
+        file_hash = get_document_hash(file_bytes)
         
-        if file_extension == ".pdf":
-            print("[DEBUG] Processing as PDF...")
-            # Process PDF directly from memory using pdfplumber
+        # Try to load from cache first
+        cached_docs = load_cached_document(file_hash)
+        if cached_docs:
+            print("✅ Loaded from cache")
+            return cached_docs
+        
+        # Process document if not cached
+        print("🔄 Processing document...")
+        
+        # Save to temporary file for processing
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            file_bytes.seek(0)
+            temp_file.write(file_bytes.read())
+            temp_file_path = temp_file.name
+        
+        try:
+            # Extract text
+            text_content = extract_text_from_file(temp_file_path)
+            print(f"[DEBUG] Extracted text length: {len(text_content)}")
+            
+            # Create document
+            document = SimpleDocument(text_content, {"source": "uploaded_file"})
+            
+            # Create chunks
+            chunks = create_semantic_chunks([document])
+            print(f"[DEBUG] Created {len(chunks)} chunks")
+            
+            # Cache the processed documents
+            save_cached_document(file_hash, chunks)
+            
+            return chunks
+            
+        finally:
+            # Clean up temporary file
             try:
-                text = ""
-                print("[DEBUG] Opening with pdfplumber...")
-                with pdfplumber.open(file_bytes) as pdf:
-                    print(f"[DEBUG] PDF has {len(pdf.pages)} pages")
-                    for i, page in enumerate(pdf.pages):
-                        print(f"[DEBUG] Processing page {i+1}...")
-                        page_text = page.extract_text()
-                        if page_text:
-                            text += page_text + "\n"
-                            print(f"[DEBUG] Page {i+1} extracted {len(page_text)} characters")
-                        else:
-                            print(f"[DEBUG] Page {i+1} extracted no text")
-                
-                if text.strip():
-                    text_content = text.strip()
-                    print(f"[DEBUG] Successfully extracted {len(text_content)} characters with pdfplumber")
-                else:
-                    print("[DEBUG] pdfplumber extracted no text, trying PyPDF2...")
-                    # Fallback to PyPDF2
-                    file_bytes.seek(0)  # Reset to beginning
-                    reader = PdfReader(file_bytes)
-                    text = ""
-                    for i, page in enumerate(reader.pages):
-                        print(f"[DEBUG] PyPDF2 processing page {i+1}...")
-                        page_text = page.extract_text()
-                        if page_text:
-                            text += page_text + "\n"
-                            print(f"[DEBUG] PyPDF2 page {i+1} extracted {len(page_text)} characters")
-                        else:
-                            print(f"[DEBUG] PyPDF2 page {i+1} extracted no text")
-                    text_content = text.strip() if text.strip() else "PDF could not be read properly"
-                    print(f"[DEBUG] PyPDF2 extracted {len(text_content)} characters")
+                os.unlink(temp_file_path)
             except Exception as e:
-                print(f"[ERROR] PDF extraction failed: {str(e)}")
-                print(f"[ERROR] Exception type: {type(e).__name__}")
-                import traceback
-                print(f"[ERROR] Full traceback: {traceback.format_exc()}")
-                text_content = "PDF could not be read properly"
-        elif file_extension == ".txt":
-            print("[DEBUG] Processing as text file...")
-            # Read text from BytesIO
-            file_bytes.seek(0)  # Reset to beginning
-            try:
-                text_content = file_bytes.read().decode('utf-8')
-                print(f"[DEBUG] Successfully decoded {len(text_content)} characters as UTF-8")
-            except UnicodeDecodeError as e:
-                print(f"[DEBUG] UTF-8 decode failed: {e}, trying latin-1...")
-                # Try other encodings
-                file_bytes.seek(0)
-                try:
-                    text_content = file_bytes.read().decode('latin-1')
-                    print(f"[DEBUG] Successfully decoded {len(text_content)} characters as latin-1")
-                except Exception as e2:
-                    print(f"[ERROR] All text decoding failed: {e2}")
-                    text_content = "Text file could not be read properly"
-        else:
-            raise ValueError(f"Unsupported file type: {file_extension}")
-        
-        print(f"[DEBUG] Final extracted text (first 500 chars): {text_content[:500]}")
-        document = SimpleDocument(text_content, {"source": "memory"})
-        print(f"[DEBUG] Created document with {len(text_content)} characters")
-        return [document]
+                print(f"Warning: Could not delete temp file: {e}")
+                
     except Exception as e:
-        print(f"[ERROR] Error loading document from memory: {str(e)}")
-        print(f"[ERROR] Exception type: {type(e).__name__}")
-        import traceback
-        print(f"[ERROR] Full traceback: {traceback.format_exc()}")
+        print(f"Error processing document: {str(e)}")
         return []
 
 
-def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[SimpleDocument]:
+def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 500, chunk_overlap: int = 100) -> List[SimpleDocument]:
     """
-    Create semantic chunks from documents with proper embeddings
+    Create smaller, more focused chunks for faster processing
     """
     chunks = []
+    
     for doc in documents:
         text = doc.page_content
         if len(text) <= chunk_size:
             chunks.append(doc)
-        else:
-            # Split into overlapping chunks
-            start = 0
-            while start < len(text):
-                end = start + chunk_size
-                chunk_text = text[start:end]
-                chunk_doc = SimpleDocument(chunk_text, doc.metadata)
-                chunks.append(chunk_doc)
-                start = end - chunk_overlap
-                if start >= len(text):
-                    break
+            continue
+            
+        # Split into smaller chunks
+        start = 0
+        while start < len(text):
+            end = start + chunk_size
+            if end > len(text):
+                end = len(text)
+            
+            chunk_text = text[start:end]
+            chunk_doc = SimpleDocument(chunk_text, doc.metadata)
+            chunks.append(chunk_doc)
+            
+            start = end - chunk_overlap
+            if start >= len(text):
+                break
+    
     return chunks
 
 
@@ -222,40 +238,40 @@ def load_vector_store(file_path: str):
     return []
 
 
-def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
+def search_documents(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
     """
-    Search documents using semantic similarity with all-MiniLM-L6-v2 embeddings
+    Optimized semantic search with reduced results
     """
     if not embedding_model:
-        # Fallback to keyword search
         return keyword_search(query, vectorstore, top_k)
     
     try:
-        # Encode the query
         query_embedding = embedding_model.encode(query)
         
-        # Calculate similarities
-        similarities = []
+        results = []
         for doc in vectorstore:
             if doc.embedding is not None:
-                similarity = np.dot(query_embedding, doc.embedding) / (np.linalg.norm(query_embedding) * np.linalg.norm(doc.embedding))
-                similarities.append((doc, similarity))
+                similarity = np.dot(query_embedding, doc.embedding) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(doc.embedding)
+                )
+                results.append((doc, similarity))
         
         # Sort by similarity and return top_k
-        similarities.sort(key=lambda x: x[1], reverse=True)
-        return similarities[:top_k]
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:top_k]
+        
     except Exception as e:
-        print(f"Semantic search failed: {e}, falling back to keyword search")
+        print(f"Semantic search failed: {e}")
         return keyword_search(query, vectorstore, top_k)
 
 
-def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
+def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
     """
-    Simple keyword-based search as fallback
+    Optimized keyword search with reduced results
     """
     query_words = set(query.lower().split())
-    results = []
     
+    results = []
     for doc in vectorstore:
         doc_words = set(doc.page_content.lower().split())
         intersection = query_words.intersection(doc_words)
@@ -263,17 +279,20 @@ def keyword_search(query: str, vectorstore: List[SimpleDocument], top_k: int = 5
             score = len(intersection) / len(query_words)
             results.append((doc, score))
     
+    # Sort by score and return top_k
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:top_k]
 
 
-def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_k: int = 5) -> List[Tuple[SimpleDocument, float]]:
-    """Retrieve relevant chunks using semantic search"""
+def retrieve_relevant_chunks(query: str, vectorstore: List[SimpleDocument], top_k: int = 3) -> List[Tuple[SimpleDocument, float]]:
+    """
+    Optimized chunk retrieval with reduced results
+    """
     return search_documents(query, vectorstore, top_k)
 
 
 def call_mistral_api(prompt: str) -> str:
-    """Call Mistral API with rate limiting and retry logic"""
+    """Call Mistral API with optimized performance"""
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
         return "Error: MISTRAL_API_KEY not found in environment variables"
@@ -285,7 +304,7 @@ def call_mistral_api(prompt: str) -> str:
         "messages": [
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 1000,
+        "max_tokens": 500,  # Reduced for faster response
         "temperature": 0.3
     }
     
@@ -294,13 +313,10 @@ def call_mistral_api(prompt: str) -> str:
         "Content-Type": "application/json"
     }
     
-    # Add random delay to avoid rate limits
-    time.sleep(random.uniform(1, 3))
-    
-    max_retries = 3
+    max_retries = 2  # Reduced retries
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, json=data, headers=headers, timeout=30)
+            response = session.post(url, json=data, headers=headers, timeout=15)  # Reduced timeout
             response.raise_for_status()
             
             result = response.json()
@@ -311,7 +327,7 @@ def call_mistral_api(prompt: str) -> str:
                 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:  # Rate limit
-                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                wait_time = min(1 + attempt, 3)  # Shorter backoff
                 print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
                 time.sleep(wait_time)
                 if attempt == max_retries - 1:
@@ -329,7 +345,7 @@ def call_mistral_api(prompt: str) -> str:
 
 
 def call_gemini_api(prompt: str) -> str:
-    """Call Gemini API with rate limiting and retry logic"""
+    """Call Gemini API with optimized performance"""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return "Error: GEMINI_API_KEY not found in environment variables"
@@ -342,17 +358,14 @@ def call_gemini_api(prompt: str) -> str:
         }],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 1000,
+            "maxOutputTokens": 500,  # Reduced for faster response
         }
     }
     
-    # Add random delay to avoid rate limits
-    time.sleep(random.uniform(1, 3))
-    
-    max_retries = 3
+    max_retries = 2  # Reduced retries
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, json=data, timeout=30)
+            response = session.post(url, json=data, timeout=15)  # Reduced timeout
             response.raise_for_status()
             
             result = response.json()
@@ -363,7 +376,7 @@ def call_gemini_api(prompt: str) -> str:
                 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:  # Rate limit
-                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                wait_time = min(1 + attempt, 3)  # Shorter backoff
                 print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
                 time.sleep(wait_time)
                 if attempt == max_retries - 1:
@@ -381,38 +394,42 @@ def call_gemini_api(prompt: str) -> str:
 
 
 def call_huggingface_api(prompt: str) -> str:
-    """Call HuggingFace API with rate limiting and retry logic"""
-    api_token = os.environ.get("HF_TOKEN")
-    if not api_token:
-        return "Error: HF_TOKEN not found in environment variables"
+    """Call HuggingFace API with optimized performance"""
+    api_key = os.environ.get("HUGGINGFACE_API_KEY")
+    if not api_key:
+        return "Error: HUGGINGFACE_API_KEY not found in environment variables"
     
-    url = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
+    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
     
     headers = {
-        "Authorization": f"Bearer {api_token}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
     
-    data = {"inputs": prompt}
+    data = {
+        "inputs": f"<s>[INST] {prompt} [/INST]",
+        "parameters": {
+            "max_new_tokens": 300,  # Reduced for faster response
+            "temperature": 0.3,
+            "do_sample": True
+        }
+    }
     
-    # Add random delay to avoid rate limits
-    time.sleep(random.uniform(1, 3))
-    
-    max_retries = 3
+    max_retries = 2  # Reduced retries
     for attempt in range(max_retries):
         try:
-            response = requests.post(url, headers=headers, json=data, timeout=30)
+            response = session.post(url, json=data, headers=headers, timeout=15)  # Reduced timeout
             response.raise_for_status()
             
             result = response.json()
             if isinstance(result, list) and len(result) > 0:
-                return result[0].get("generated_text", "No response from HuggingFace API")
+                return result[0]["generated_text"]
             else:
                 return "Error: No response from HuggingFace API"
                 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:  # Rate limit
-                wait_time = (2 ** attempt) + random.uniform(0, 1)  # Exponential backoff
+                wait_time = min(1 + attempt, 3)  # Shorter backoff
                 print(f"Rate limit hit, waiting {wait_time:.1f} seconds...")
                 time.sleep(wait_time)
                 if attempt == max_retries - 1:
@@ -427,6 +444,56 @@ def call_huggingface_api(prompt: str) -> str:
             return f"Unexpected error calling HuggingFace API: {str(e)}"
     
     return "Error: All retry attempts failed"
+
+
+def call_apis_parallel(prompt: str) -> str:
+    """Call multiple APIs in parallel and return the first successful response"""
+    
+    def call_api(api_name: str, api_func):
+        try:
+            result = api_func(prompt)
+            if not result.startswith("Error:"):
+                return result
+            return None
+        except Exception as e:
+            print(f"{api_name} failed: {e}")
+            return None
+    
+    # Define available APIs
+    apis = [
+        ("Mistral", call_mistral_api),
+        ("Gemini", call_gemini_api),
+        ("HuggingFace", call_huggingface_api)
+    ]
+    
+    # Try APIs in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        future_to_api = {
+            executor.submit(call_api, name, func): name 
+            for name, func in apis
+        }
+        
+        for future in concurrent.futures.as_completed(future_to_api, timeout=20):
+            api_name = future_to_api[future]
+            try:
+                result = future.result()
+                if result:
+                    print(f"✅ {api_name} responded successfully")
+                    return result
+            except Exception as e:
+                print(f"❌ {api_name} failed: {e}")
+    
+    # If all parallel calls fail, try sequential fallback
+    print("🔄 Trying sequential fallback...")
+    for name, func in apis:
+        try:
+            result = func(prompt)
+            if not result.startswith("Error:"):
+                return result
+        except Exception as e:
+            print(f"❌ {name} fallback failed: {e}")
+    
+    return "Error: All API calls failed"
 
 
 def clean_response(response: str) -> str:
@@ -464,6 +531,18 @@ def clean_response(response: str) -> str:
     return cleaned.strip()
 
 
+def monitor_performance(func):
+    """Decorator to monitor function performance"""
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"⏱️ {func.__name__} took {duration:.2f} seconds")
+        return result
+    return wrapper
+
+@monitor_performance
 def answer_question(question: str, top_chunks: List[Dict[str, str]], method: str = "auto", custom_prompt: str = None) -> str:
     """
     Answer question using AI with improved fallback handling
@@ -488,7 +567,12 @@ Answer (be direct and concise):"""
     
     # Try different methods based on availability and rate limits
     if method == "auto":
-        # Try Mistral first, then Gemini, then HuggingFace, then fallback
+        # Try parallel API calls first
+        result = call_apis_parallel(prompt)
+        if not result.startswith("Error:"):
+            return clean_response(result)
+        
+        # Fallback to sequential
         try:
             result = call_mistral_api(prompt)
             if not result.startswith("Error:"):
