@@ -3,6 +3,8 @@ import tempfile
 import requests
 from typing import List, Dict, Any, Tuple, Optional
 import re
+import pdfplumber
+from PyPDF2 import PdfReader
 
 # Simple document class for our simplified version
 class SimpleDocument:
@@ -11,148 +13,53 @@ class SimpleDocument:
         self.metadata = metadata or {}
 
 def extract_text_from_pdf(pdf_path: str) -> str:
-    """Extract text from PDF using enhanced PyTorch-based extraction"""
+    """Extract text from PDF using pdfplumber, fallback to PyPDF2 if needed"""
+    # Try pdfplumber first
     try:
-        # Import the enhanced extractor
-        from enhanced_pdf_extractor import pdf_extractor
-        
-        # Extract text using multiple strategies
-        extracted_text = pdf_extractor.extract_text(pdf_path)
-        
-        # Clean the extracted text
-        cleaned_text = pdf_extractor.clean_extracted_text(extracted_text)
-        
-        return cleaned_text
-        
-    except ImportError:
-        # Fallback to basic extraction if enhanced extractor is not available
-        print("Enhanced PDF extractor not available, using basic extraction")
-        return _basic_extract_text_from_pdf(pdf_path)
+        text = ""
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+        if text.strip():
+            return text.strip()
     except Exception as e:
-        print(f"Enhanced PDF extraction failed: {str(e)}")
-        return _basic_extract_text_from_pdf(pdf_path)
-
-def _basic_extract_text_from_pdf(pdf_path: str) -> str:
-    """Basic text extraction as fallback"""
+        print(f"pdfplumber extraction failed: {str(e)}")
+    # Fallback to PyPDF2
     try:
-        # Strategy 1: Try to read as text first (in case it's actually a text file)
-        with open(pdf_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            # Check if it looks like readable text
-            if len(content) > 100 and not any(char in content for char in ['\x00', '\x01', '\x02', '\x03']):
-                return content
-    except:
-        pass
-    
-    try:
-        # Strategy 2: Read as binary and try multiple extraction methods
-        with open(pdf_path, 'rb') as f:
-            content = f.read()
-        
-        # Method 2a: Try UTF-8 decode with error handling
-        try:
-            decoded = content.decode('utf-8', errors='ignore')
-            # Extract readable text lines
-            lines = decoded.split('\n')
-            text_content = ""
-            for line in lines:
-                # Remove binary artifacts and keep readable text
-                clean_line = re.sub(r'[^\x20-\x7E\n\r\t]', '', line)
-                if len(clean_line.strip()) > 5:  # Less restrictive
-                    text_content += clean_line + '\n'
-            
-            if len(text_content.strip()) > 100:  # If we got substantial text
-                return text_content.strip()
-        except:
-            pass
-        
-        # Method 2b: Look for PDF text objects (BT/ET markers)
-        content_str = str(content)
-        text_objects = re.findall(r'BT\s*(.*?)\s*ET', content_str, re.DOTALL)
-        if text_objects:
-            extracted_text = ""
-            for obj in text_objects:
-                # Extract text from text objects
-                text_parts = re.findall(r'\(([^)]+)\)', obj)
-                for part in text_parts:
-                    if len(part.strip()) > 2:
-                        extracted_text += part + ' '
-            if extracted_text.strip():
-                return extracted_text.strip()
-        
-        # Method 2c: Look for text patterns in binary data
-        # Convert binary to string and look for readable patterns
-        content_str = str(content)
-        
-        # Look for common insurance terms in the binary data
-        insurance_terms = [
-            'policy', 'coverage', 'premium', 'claim', 'hospital', 'surgery', 
-            'maternity', 'waiting', 'period', 'exclusion', 'benefit', 'medical',
-            'insurance', 'health', 'treatment', 'diagnosis', 'medication'
-        ]
-        
-        found_terms = []
-        for term in insurance_terms:
-            if term.lower() in content_str.lower():
-                found_terms.append(term)
-        
-        if found_terms:
-            # Try to extract sentences around found terms
-            sentences = []
-            for term in found_terms:
-                # Find positions of the term
-                term_positions = [m.start() for m in re.finditer(term, content_str, re.IGNORECASE)]
-                for pos in term_positions:
-                    # Extract text around the term
-                    start = max(0, pos - 100)
-                    end = min(len(content_str), pos + 100)
-                    context = content_str[start:end]
-                    # Clean the context
-                    clean_context = re.sub(r'[^\x20-\x7E\n\r\t]', '', context)
-                    if len(clean_context.strip()) > 20:
-                        sentences.append(clean_context.strip())
-            
-            if sentences:
-                return " ".join(sentences[:10])  # Return first 10 sentences
-        
-        # Method 2d: Try to extract any readable text patterns
-        # Look for sequences of printable characters
-        printable_pattern = re.findall(r'[A-Za-z0-9\s\.\,\;\:\!\?\-\(\)]+', content_str)
-        if printable_pattern:
-            # Filter out very short patterns and join
-            meaningful_patterns = [p.strip() for p in printable_pattern if len(p.strip()) > 5]
-            if meaningful_patterns:
-                return " ".join(meaningful_patterns[:20])  # Return first 20 patterns
-        
-        # If all methods fail, return a helpful error message
-        return "The PDF document could not be read properly. This might be due to:\n1. The file being corrupted or password-protected\n2. The file being an image-based PDF (scanned document)\n3. The file being in an unsupported format\n\nPlease provide a text-based PDF or convert the document to text format."
-        
+        text = ""
+        reader = PdfReader(pdf_path)
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        if text.strip():
+            return text.strip()
     except Exception as e:
-        return f"Error processing the PDF file: {str(e)}. Please ensure the file is accessible and in a supported format."
+        print(f"PyPDF2 extraction failed: {str(e)}")
+    # If both fail, return error message
+    return "The PDF document could not be read properly. This might be due to: (1) The file being corrupted or password-protected, (2) The file being an image-based PDF (scanned document), (3) The file being in an unsupported format. Please provide a text-based PDF or convert the document to text format."
 
-def load_and_process_document(file_path: str) -> List[SimpleDocument]:
+
+def load_and_process_document(file_path: str) -> list:
     """
     Load and process document from file path
     """
     try:
-        # Check file extension
         file_ext = os.path.splitext(file_path)[1].lower()
-        
         if file_ext == '.pdf':
-            # Extract text from PDF
             text_content = extract_text_from_pdf(file_path)
-        else:
-            # Read as text file
+        elif file_ext == '.txt':
             with open(file_path, 'r', encoding='utf-8') as f:
                 text_content = f.read()
-        
-        # Create a single document
+        else:
+            raise ValueError(f"Unsupported file type: {file_ext}")
         document = SimpleDocument(text_content, {"source": file_path})
         return [document]
-        
     except Exception as e:
         print(f"Error loading document: {str(e)}")
-        return [SimpleDocument(f"Error loading document: {str(e)}", {"source": file_path})]
+        return []
 
 def create_semantic_chunks(documents: List[SimpleDocument], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[SimpleDocument]:
     """
