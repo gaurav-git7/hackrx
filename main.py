@@ -247,6 +247,23 @@ async def test_endpoint():
         "available_models": AVAILABLE_MODELS
     }
 
+@app.post("/test-post")
+async def test_post_endpoint(request: Request):
+    """Test POST endpoint to check JSON parsing"""
+    try:
+        body = await request.json()
+        return {
+            "message": "POST test successful!",
+            "received_data": body,
+            "status": "success"
+        }
+    except Exception as e:
+        return {
+            "message": "POST test failed!",
+            "error": str(e),
+            "status": "error"
+        }
+
 @app.post("/hackrx/run")
 async def hackrx_run(
     request: Request,
@@ -413,6 +430,46 @@ async def hackrx_run(
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "message": "HackRx API is running"}
+
+@app.post("/hackrx/simple")
+async def hackrx_simple(
+    request: Request,
+    token: str = Depends(verify_token)
+):
+    """
+    Simplified version of hackrx endpoint for testing
+    """
+    try:
+        # Parse JSON request manually
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+        
+        documents_url = body.get("documents")
+        questions = body.get("questions", [])
+        
+        if not documents_url:
+            raise HTTPException(status_code=400, detail="Missing 'documents' field")
+        if not questions:
+            raise HTTPException(status_code=400, detail="Missing 'questions' field")
+        if not isinstance(questions, list):
+            raise HTTPException(status_code=400, detail="'questions' must be a list")
+        
+        print(f"🚀 Simple request with {len(questions)} questions")
+        print(f"📥 Document URL: {documents_url}")
+        
+        # Return a simple response to test the endpoint
+        return {
+            "message": "Simple request received successfully!",
+            "documents_url": documents_url,
+            "questions": questions,
+            "answers": [f"Simple test answer for: {q}" for q in questions]
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in hackrx_simple: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
