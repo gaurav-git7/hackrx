@@ -23,12 +23,30 @@ The deployment was failing due to PyMuPDF compilation issues on Render's build e
    - Moved setuptools and wheel to top of requirements.txt
    - Added packaging dependency for better compatibility
 
+4. **Added Missing Dependencies**
+   - Added `sentence-transformers==2.2.2` for HuggingFaceEmbeddings
+   - Added `transformers==4.35.0` for model support
+   - Installed PyTorch CPU version separately for better compatibility
+
+5. **Enhanced Error Handling**
+   - Added timeout handling for API calls (30s for Gemini, 60s for HuggingFace)
+   - Added comprehensive error handling for PDF processing
+   - Added memory optimization for free tier deployment
+   - Added startup health checks and logging
+
+6. **Performance Optimizations**
+   - Reduced chunk size to 800 for memory efficiency
+   - Added CPU-only model configurations
+   - Added environment variables for better compatibility
+
 ### Files Modified
 
-1. `requirements.txt` - Replaced PyMuPDF with PyPDF2, reordered dependencies
-2. `llm_query_retrieval_enhanced.py` - Added PyPDF2 fallback
-3. `render.yaml` - Updated Python version and build command
-4. `build.sh` - New build script for robust deployment
+1. `requirements.txt` - Replaced PyMuPDF with PyPDF2, added missing dependencies
+2. `llm_query_retrieval_enhanced.py` - Added PyPDF2 fallback, enhanced error handling
+3. `main.py` - Added timeout handling, error handling, and startup events
+4. `render.yaml` - Updated Python version and build command
+5. `build.sh` - Enhanced build script with PyTorch CPU installation
+6. `.gitignore` - Added comprehensive ignore patterns
 
 ### Benefits
 

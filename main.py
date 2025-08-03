@@ -178,6 +178,13 @@ def generate_fallback_answer(question, context):
 # Initialize FastAPI app
 app = FastAPI(title="HackRx Document Q&A API", version="1.0.0")
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize app on startup"""
+    print("🚀 Starting HackRx Document Q&A API...")
+    print(f"📊 Available models: {AVAILABLE_MODELS}")
+    print("✅ API is ready to serve requests!")
+
 # Security
 security = HTTPBearer()
 AUTH_TOKEN = "02b1ad646a69f58d41c75bb9ea5f78bbaf30389258623d713ff4115b554377f0"
@@ -230,7 +237,12 @@ Answer:
 
 @app.get("/")
 async def root():
-    return {"message": "HackRx Document Q&A API is running!"}
+    return {
+        "message": "HackRx Document Q&A API is running!",
+        "status": "healthy",
+        "version": "1.0.0",
+        "available_models": AVAILABLE_MODELS
+    }
 
 @app.post("/hackrx/run", response_model=HackRxResponse)
 async def hackrx_run(
@@ -245,8 +257,13 @@ async def hackrx_run(
         
         # Step 1: Download PDF from URL
         print(f"📥 Downloading PDF from: {request.documents}")
-        response = requests.get(request.documents)
-        response.raise_for_status()
+        try:
+            response = requests.get(request.documents, timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.Timeout:
+            raise HTTPException(status_code=408, detail="PDF download timed out. Please try again.")
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=400, detail=f"Failed to download PDF: {str(e)}")
         
         # Step 2: Save PDF to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -256,16 +273,26 @@ async def hackrx_run(
         try:
             # Step 3: Load and process document
             print("📄 Loading and processing document...")
-            # SUGGESTED: Try chunk_size=1200-2000, chunk_overlap=200-400 for insurance policies
-            documents = load_and_process_document(pdf_path)
+            try:
+                # SUGGESTED: Try chunk_size=1200-2000, chunk_overlap=200-400 for insurance policies
+                documents = load_and_process_document(pdf_path)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(e)}")
             
             # Step 4: Create semantic chunks
             print("🔪 Creating semantic chunks...")
-            chunks = create_semantic_chunks(documents)  # Now uses improved chunking
+            try:
+                # Use smaller chunks for memory optimization on free tier
+                chunks = create_semantic_chunks(documents, chunk_size=800, chunk_overlap=150)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to create chunks: {str(e)}")
             
             # Step 5: Generate embeddings and build FAISS index
             print("🤖 Creating vector store...")
-            vectorstore = create_vector_store(chunks)
+            try:
+                vectorstore = create_vector_store(chunks)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to create vector store: {str(e)}")
             
             # Step 6: Process each question with real AI responses
             answers = []

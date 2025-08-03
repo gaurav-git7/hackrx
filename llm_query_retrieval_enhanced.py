@@ -76,11 +76,28 @@ def create_vector_store(chunks: List[Any], embedding_model_name: str = "huggingf
     """Create FAISS vector store with enhanced embeddings"""
     print(f"🤖 Creating embeddings using {embedding_model_name}...")
     
-    embedding_model = HuggingFaceEmbeddings(model_name=embedding_model_name)
-    vectorstore = FAISS.from_documents(chunks, embedding_model)
-    
-    print(f"✅ Vector store created with {len(chunks)} embeddings")
-    return vectorstore
+    try:
+        embedding_model = HuggingFaceEmbeddings(
+            model_name=embedding_model_name,
+            model_kwargs={'device': 'cpu'},  # Force CPU to avoid GPU issues
+            encode_kwargs={'normalize_embeddings': True}
+        )
+        vectorstore = FAISS.from_documents(chunks, embedding_model)
+        print(f"✅ Vector store created with {len(chunks)} embeddings")
+        return vectorstore
+    except Exception as e:
+        print(f"❌ Error creating vector store: {str(e)}")
+        print("🔄 Trying with fallback embedding model...")
+        # Fallback to a simpler model
+        fallback_model = "sentence-transformers/all-MiniLM-L6-v2"
+        embedding_model = HuggingFaceEmbeddings(
+            model_name=fallback_model,
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+        vectorstore = FAISS.from_documents(chunks, embedding_model)
+        print(f"✅ Vector store created with fallback model: {len(chunks)} embeddings")
+        return vectorstore
 
 def save_vector_store(vectorstore: FAISS, index_path: str = "faiss_index"):
     """Save FAISS index locally"""
@@ -91,10 +108,18 @@ def save_vector_store(vectorstore: FAISS, index_path: str = "faiss_index"):
 def load_vector_store(index_path: str = "faiss_index", embedding_model_name: str = "huggingface/sentence-transformers/all-MiniLM-L6-v2") -> FAISS:
     """Load existing FAISS index"""
     print(f"📂 Loading vector store from {index_path}...")
-    embedding_model = HuggingFaceEmbeddings(model_name=embedding_model_name)
-    vectorstore = FAISS.load_local(index_path, embedding_model, allow_dangerous_deserialization=True)
-    print("✅ Vector store loaded successfully")
-    return vectorstore
+    try:
+        embedding_model = HuggingFaceEmbeddings(
+            model_name=embedding_model_name,
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
+        )
+        vectorstore = FAISS.load_local(index_path, embedding_model, allow_dangerous_deserialization=True)
+        print("✅ Vector store loaded successfully")
+        return vectorstore
+    except Exception as e:
+        print(f"❌ Error loading vector store: {str(e)}")
+        raise
 
 # 3. Enhanced Search and Retrieval
 
@@ -161,10 +186,19 @@ def answer_with_gemini(query: str, top_chunks: List[Dict[str, Any]], api_key: st
             "temperature": 0.3
         }
     }
-    response = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}", 
-                           headers=headers, json=data)
-    response.raise_for_status()
-    return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    try:
+        response = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}", 
+            headers=headers, 
+            json=data,
+            timeout=30  # 30 second timeout
+        )
+        response.raise_for_status()
+        return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except requests.exceptions.Timeout:
+        return "Sorry, the request timed out. Please try again."
+    except requests.exceptions.RequestException as e:
+        return f"Error communicating with Gemini API: {str(e)}"
 
 def answer_with_huggingface(query: str, top_chunks: List[Dict[str, Any]], model_name: str = "mistralai/Mistral-7B-Instruct-v0.2", custom_prompt: str = None) -> str:
     """Use Hugging Face Inference API for question answering"""
@@ -184,9 +218,19 @@ def answer_with_huggingface(query: str, top_chunks: List[Dict[str, Any]], model_
             "do_sample": True
         }
     }
-    response = requests.post(f"https://api-inference.huggingface.co/models/{model_name}", headers=headers, json=data)
-    response.raise_for_status()
-    return response.json()[0]["generated_text"].split("[/INST]")[-1].strip()
+    try:
+        response = requests.post(
+            f"https://api-inference.huggingface.co/models/{model_name}", 
+            headers=headers, 
+            json=data,
+            timeout=60  # 60 second timeout for HuggingFace
+        )
+        response.raise_for_status()
+        return response.json()[0]["generated_text"].split("[/INST]")[-1].strip()
+    except requests.exceptions.Timeout:
+        return "Sorry, the request timed out. Please try again."
+    except requests.exceptions.RequestException as e:
+        return f"Error communicating with HuggingFace API: {str(e)}"
 
 def answer_question(query: str, top_chunks: List[Dict[str, Any]], method: str = "gemini", custom_prompt: str = None, **kwargs) -> str:
     """Answer question using specified method"""

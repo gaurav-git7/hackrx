@@ -19,6 +19,10 @@ langchain-community==0.0.10
 langchain-core==0.1.10
 langchain-text-splitters==0.0.1
 
+# ML/AI dependencies for embeddings and models
+sentence-transformers==2.2.2
+transformers==4.35.0
+
 # Additional dependencies for better build compatibility
 packaging>=21.0
 
