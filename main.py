@@ -7,12 +7,8 @@ import os
 from dotenv import load_dotenv
 import re
 import json
-import google.generativeai as genai
-from pydantic import BaseModel
-from langchain_community.document_loaders import PyPDFLoader, UnstructuredPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
+# Removed google.generativeai import - not needed for our implementation
+# Removed unnecessary imports - using simplified implementation
 
 # Load environment variables
 load_dotenv()
