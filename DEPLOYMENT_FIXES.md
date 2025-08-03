@@ -19,14 +19,16 @@ The deployment was failing due to PyMuPDF compilation issues on Render's build e
 
 3. **Build Optimizations**
    - Updated Python version to 3.11.7 in render.yaml
-   - Added pip upgrade command to build process
-   - Added setuptools and wheel dependencies for better compatibility
+   - Created `build.sh` script for robust build process
+   - Moved setuptools and wheel to top of requirements.txt
+   - Added packaging dependency for better compatibility
 
 ### Files Modified
 
-1. `requirements.txt` - Replaced PyMuPDF with PyPDF2
+1. `requirements.txt` - Replaced PyMuPDF with PyPDF2, reordered dependencies
 2. `llm_query_retrieval_enhanced.py` - Added PyPDF2 fallback
 3. `render.yaml` - Updated Python version and build command
+4. `build.sh` - New build script for robust deployment
 
 ### Benefits
 

@@ -1,3 +1,7 @@
+# System dependencies - must be installed first
+setuptools>=65.0.0
+wheel>=0.38.0
+
 # Core dependencies for LLM-powered query–retrieval system
 # PyMuPDF removed - using PyPDF2 instead for better deployment compatibility
 PyPDF2==3.0.1
@@ -15,9 +19,8 @@ langchain-community==0.0.10
 langchain-core==0.1.10
 langchain-text-splitters==0.0.1
 
-# Additional system dependencies for better deployment compatibility
-setuptools>=65.0.0
-wheel>=0.38.0
+# Additional dependencies for better build compatibility
+packaging>=21.0
 
 # Web framework dependencies
 fastapi==0.104.1
