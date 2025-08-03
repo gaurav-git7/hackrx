@@ -291,11 +291,11 @@ async def hackrx_run(
     try:
         # Parse JSON body
         body = await request.json()
-        documents_url = body.get("documents_url")
+        documents_url = body.get("documents")
         questions = body.get("questions", [])
         
         if not documents_url:
-            raise HTTPException(status_code=400, detail="documents_url is required")
+            raise HTTPException(status_code=400, detail="documents field is required")
         
         if not questions:
             raise HTTPException(status_code=400, detail="questions array is required")
